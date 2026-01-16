@@ -142,22 +142,22 @@ const updateCard = ({ platform, id }, detailOverride) => {
 };
 
 const requestAiSummary = async ({ url, platform, id, model, key }) => {
-  const response = await fetch("/api/parse", {
+  // Point to our local Phase 2 Python Backend
+  const response = await fetch("http://127.0.0.1:5000/api/parse", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(key ? { Authorization: `Bearer ${key}` } : {}),
     },
     body: JSON.stringify({
       url,
       platform,
       id,
-      model,
     }),
   });
 
   if (!response.ok) {
-    throw new Error("api-request-failed");
+    const errorData = await response.json();
+    throw new Error(errorData.message || "api-request-failed");
   }
 
   return response.json();
