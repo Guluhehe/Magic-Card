@@ -52,12 +52,52 @@
               />
               <button type="submit">生成卡片</button>
             </div>
+            <div class="config-grid">
+              <div class="field">
+                <label for="parse-mode">解析方式</label>
+                <select id="parse-mode">
+                  <option value="mock">本地示例</option>
+                  <option value="api">AI API（需后端）</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="model-name">模型</label>
+                <input id="model-name" type="text" placeholder="例如 gpt-4o-mini" />
+              </div>
+              <div class="field">
+                <label for="api-key">API Key</label>
+                <input id="api-key" type="password" placeholder="仅本地测试使用" />
+              </div>
+            </div>
           </form>
           <div class="quick-actions">
             <button class="ghost" data-sample="youtube">使用示例 YouTube 链接</button>
             <button class="ghost" data-sample="twitter">使用示例 Twitter 链接</button>
           </div>
           <div class="status" id="status">等待链接输入...</div>
+          <div class="style-panel">
+            <h3>卡片样式</h3>
+            <div class="config-grid">
+              <div class="field">
+                <label for="accent-color">强调色</label>
+                <input id="accent-color" type="color" value="#4c6fff" />
+              </div>
+              <div class="field">
+                <label for="density">信息密度</label>
+                <select id="density">
+                  <option value="normal">舒适</option>
+                  <option value="compact">紧凑</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="show-highlights">重点模块</label>
+                <select id="show-highlights">
+                  <option value="show">显示</option>
+                  <option value="hide">隐藏</option>
+                </select>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section class="output-panel">

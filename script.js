@@ -9,6 +9,13 @@ const cardSummary = document.getElementById("card-summary");
 const cardHighlights = document.getElementById("card-highlights");
 const sourceId = document.getElementById("source-id");
 const confidence = document.getElementById("confidence");
+const parseMode = document.getElementById("parse-mode");
+const modelName = document.getElementById("model-name");
+const apiKey = document.getElementById("api-key");
+const accentColor = document.getElementById("accent-color");
+const density = document.getElementById("density");
+const showHighlights = document.getElementById("show-highlights");
+const contentCard = document.getElementById("content-card");
 const quickActions = document.querySelectorAll(".quick-actions button");
 
 const sampleUrls = {
@@ -36,7 +43,12 @@ const parseUrl = (input) => {
     return null;
   }
 
-  const url = new URL(trimmed);
+  let url;
+  try {
+    url = new URL(trimmed);
+  } catch (error) {
+    return null;
+  }
   if (url.hostname.includes("youtube.com") || url.hostname.includes("youtu.be")) {
     const id = url.hostname.includes("youtu.be")
       ? url.pathname.replace("/", "")
@@ -53,7 +65,7 @@ const parseUrl = (input) => {
   return null;
 };
 
-const updateCard = ({ platform, id }) => {
+const updateCard = ({ platform, id }, detailOverride) => {
   const insights = {
     YouTube: {
       title: "3 个要点快速掌握视频核心",
@@ -79,37 +91,88 @@ const updateCard = ({ platform, id }) => {
     },
   };
 
-  const detail = insights[platform];
+  const detail = detailOverride || insights[platform];
   platformChip.textContent = platform;
   platformName.textContent = platform;
   contentLength.textContent = detail.length;
   cardTitle.textContent = detail.title;
   cardSummary.textContent = detail.summary;
   sourceId.textContent = `来源 ID：${id || "--"}`;
-  confidence.textContent = "置信度：92%";
-  buildHighlights(detail.highlights);
+  confidence.textContent = `置信度：${detail.confidence || "92%"}`;
+  buildHighlights(detail.highlights || []);
 };
 
-const handleSubmit = (event) => {
-  event.preventDefault();
-  try {
-    const data = parseUrl(urlInput.value);
-    if (!data || !data.id) {
-      status.textContent = "暂不支持的链接，请输入有效的 YouTube 或 Twitter 链接。";
-      status.style.color = "#d14343";
-      return;
-    }
+const requestAiSummary = async ({ url, platform, id, model, key }) => {
+  const response = await fetch("/api/parse", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(key ? { Authorization: `Bearer ${key}` } : {}),
+    },
+    body: JSON.stringify({
+      url,
+      platform,
+      id,
+      model,
+    }),
+  });
 
-    status.textContent = "解析完成，已生成卡片。";
-    status.style.color = "#4c6fff";
-    updateCard(data);
-  } catch (error) {
-    status.textContent = "链接格式有误，请检查后重试。";
-    status.style.color = "#d14343";
+  if (!response.ok) {
+    throw new Error("api-request-failed");
   }
+
+  return response.json();
+};
+
+const applyCardStyles = () => {
+  const chosenAccent = accentColor.value;
+  const densityValue = density.value;
+  const highlightMode = showHighlights.value;
+
+  contentCard.style.setProperty("--accent", chosenAccent);
+  contentCard.classList.toggle("compact", densityValue === "compact");
+  cardHighlights.classList.toggle("hidden", highlightMode === "hide");
+};
+
+const handleSubmit = async (event) => {
+  event.preventDefault();
+  const data = parseUrl(urlInput.value);
+  if (!data || !data.id) {
+    status.textContent = "暂不支持的链接，请输入有效的 YouTube 或 Twitter 链接。";
+    status.style.color = "#d14343";
+    return;
+  }
+
+  status.textContent = "正在解析内容...";
+  status.style.color = "#4c6fff";
+
+  if (parseMode.value === "api") {
+    try {
+      const result = await requestAiSummary({
+        url: urlInput.value,
+        platform: data.platform,
+        id: data.id,
+        model: modelName.value,
+        key: apiKey.value,
+      });
+      updateCard(data, result);
+      status.textContent = "AI 解析完成，已生成卡片。";
+      return;
+    } catch (error) {
+      status.textContent =
+        "AI API 暂未连接，已回退为示例解析。请配置后端服务。";
+      status.style.color = "#d98324";
+    }
+  }
+
+  updateCard(data);
+  status.textContent = "解析完成，已生成卡片。";
 };
 
 form.addEventListener("submit", handleSubmit);
+accentColor.addEventListener("input", applyCardStyles);
+density.addEventListener("change", applyCardStyles);
+showHighlights.addEventListener("change", applyCardStyles);
 
 quickActions.forEach((button) => {
   button.addEventListener("click", () => {
@@ -119,3 +182,5 @@ quickActions.forEach((button) => {
     status.style.color = "#4c6fff";
   });
 });
+
+applyCardStyles();
