@@ -182,43 +182,32 @@ const handleSubmit = async (event) => {
     return;
   }
 
-  status.textContent = "正在使用 AI 引擎解析内容...";
+  status.textContent = "正在通过后端引擎提取内容 (Phase 2 Real Extract)...";
   status.style.color = "var(--primary)";
 
-  // Simulate network delay for "Magical" feel
-  await new Promise(r => setTimeout(r, 1500));
+  // Phase 2: Force API mode for demonstration if it's a YouTube link
+  const targetMode = data.platform === 'YouTube' ? 'api' : parseMode.value;
 
-  /**
-   * BACKEND INTEGRATION GUIDE:
-   * To connect a real AI backend (e.g., Node.js + OpenAI/Gemini):
-   * 1. Create a server endpoint (e.g., /api/parse) that accepts a URL.
-   * 2. Use a library like 'puppeteer' or 'cheerio' to scrape the content,
-   *    or use official YouTube/Twitter APIs.
-   * 3. Pass the scraped text to an LLM with a prompt like:
-   *    "Summarize this content into 3 key highlights and a short summary."
-   * 4. Return the result in JSON format matching the 'insightsDatabase' structure.
-   */
-  if (parseMode.value === "api") {
+  if (targetMode === "api") {
     try {
       const result = await requestAiSummary({
         url: urlInput.value,
         platform: data.platform,
         id: data.id,
-        model: modelName.value,
-        key: apiKey.value,
       });
       updateCard(data, result);
-      status.textContent = "✨ AI 解析完成，卡片已魔法生成！";
+      status.textContent = "✨ 原始内容抓取成功！AI 已就绪（已连接真实后端）。";
       return;
     } catch (error) {
-      status.textContent = "⚠️ API 连接失败，已回退至智能模拟模式。";
+      console.error(error);
+      status.textContent = `⚠️ 内容提取失败: ${error.message}。已回退至演示模式。`;
       status.style.color = "#f59e0b";
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 2000));
     }
   }
 
   updateCard(data);
-  status.textContent = "✨ 解析成功！卡片已魔法生成。";
+  status.textContent = "✨ 解析成功！卡片已魔法生成 (展示模式)。";
 };
 
 form.addEventListener("submit", handleSubmit);
