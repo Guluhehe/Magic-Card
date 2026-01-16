@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>内容卡片解析器</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div>
+          <p class="tag">AI 内容卡片</p>
+          <h1>输入 YouTube 或 Twitter 链接，一键生成重点内容卡片</h1>
+          <p class="subtitle">
+            将视频或推文链接解析为结构化摘要，筛选重点信息，并以精美卡片形式输出。
+          </p>
+        </div>
+        <div class="hero-card">
+          <div class="hero-card__label">示例输出</div>
+          <div class="content-card preview">
+            <div class="card-header">
+              <span class="platform">YouTube</span>
+              <span class="time">03:21</span>
+            </div>
+            <h3>如何在 3 分钟内理解这段内容</h3>
+            <ul>
+              <li>核心观点：用故事化结构传递复杂信息。</li>
+              <li>关键数据：78% 的观众在 15 秒内决定是否继续观看。</li>
+              <li>行动建议：将结论放在前 10 秒内。</li>
+            </ul>
+          </div>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="input-panel">
+          <h2>开始解析</h2>
+          <p class="helper">支持 YouTube 视频或 Twitter 推文链接。</p>
+          <form id="parser-form">
+            <label for="url-input">链接地址</label>
+            <div class="input-group">
+              <input
+                id="url-input"
+                type="url"
+                placeholder="粘贴链接，例如 https://www.youtube.com/watch?v=xxxx"
+                required
+              />
+              <button type="submit">生成卡片</button>
+            </div>
+            <div class="config-grid">
+              <div class="field">
+                <label for="parse-mode">解析方式</label>
+                <select id="parse-mode">
+                  <option value="mock">本地示例</option>
+                  <option value="api">AI API（需后端）</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="model-name">模型</label>
+                <input id="model-name" type="text" placeholder="例如 gpt-4o-mini" />
+              </div>
+              <div class="field">
+                <label for="api-key">API Key</label>
+                <input id="api-key" type="password" placeholder="仅本地测试使用" />
+              </div>
+            </div>
+          </form>
+          <div class="quick-actions">
+            <button class="ghost" data-sample="youtube">使用示例 YouTube 链接</button>
+            <button class="ghost" data-sample="twitter">使用示例 Twitter 链接</button>
+          </div>
+          <div class="status" id="status">等待链接输入...</div>
+          <div class="style-panel">
+            <h3>卡片样式</h3>
+            <div class="config-grid">
+              <div class="field">
+                <label for="accent-color">强调色</label>
+                <input id="accent-color" type="color" value="#4c6fff" />
+              </div>
+              <div class="field">
+                <label for="density">信息密度</label>
+                <select id="density">
+                  <option value="normal">舒适</option>
+                  <option value="compact">紧凑</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="show-highlights">重点模块</label>
+                <select id="show-highlights">
+                  <option value="show">显示</option>
+                  <option value="hide">隐藏</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="output-panel">
+          <div class="output-header">
+            <h2>生成结果</h2>
+            <span class="chip" id="platform-chip">未检测</span>
+          </div>
+          <div class="content-card" id="content-card">
+            <div class="card-header">
+              <span class="platform" id="platform-name">--</span>
+              <span class="time" id="content-length">--</span>
+            </div>
+            <h3 id="card-title">请先输入链接生成内容</h3>
+            <p class="summary" id="card-summary">
+              我们会解析链接内容，提取重点信息，并以易读结构呈现。
+            </p>
+            <div class="highlights" id="card-highlights"></div>
+            <div class="meta">
+              <span id="source-id">来源 ID：--</span>
+              <span id="confidence">置信度：--</span>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
