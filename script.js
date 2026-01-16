@@ -20,7 +20,58 @@ const quickActions = document.querySelectorAll(".quick-actions button");
 
 const sampleUrls = {
   youtube: "https://www.youtube.com/watch?v=NjYt_7R-1Dk",
-  twitter: "https://twitter.com/OpenAI/status/1700000000000000000",
+  twitter: "https://x.com/OpenAI/status/1790432049117327631",
+};
+
+const insightsDatabase = {
+  YouTube: [
+    {
+      title: "GPT-4o 交互演示：AI 的未来已来",
+      summary: "OpenAI 发布的 GPT-4o 展示了极低延迟的语音交互和视觉情感识别能力，标志着实时多模态 AI 进入新纪元。",
+      length: "14:28",
+      confidence: "98%",
+      highlights: [
+        { label: "核心技术", text: "模型实现了端到端的语音处理，延迟降低至 232 毫秒。" },
+        { label: "交互突破", text: "AI 现在能实时感知识别用户的呼吸、语调变化及面部表情。" },
+        { label: "应用场景", text: "展示了作为实时翻译官、数学助教及视障人士助手的巨大潜力。" },
+      ],
+    },
+    {
+      title: "如何利用 AI 工具实现 10 倍生产力",
+      summary: "本视频深入探讨了如何整合 Cursor, Perplexity 和 Gamma 等工具，构建自动化工作流。重点在于提示词工程的实战应用。",
+      length: "08:45",
+      confidence: "95%",
+      highlights: [
+        { label: "工具链", text: "推荐使用 Cursor 进行代码补全，Perplexity 进行深度搜索。" },
+        { label: "核心策略", text: "‘AI-First’ 思维，先让 AI 搭框架，人再填肉。" },
+        { label: "避坑指南", text: "警惕 AI 幻觉，所有关键结论必须由人类二次验证。" },
+      ],
+    }
+  ],
+  Twitter: [
+    {
+      title: "OpenAI 发布 GPT-4o 总览",
+      summary: "推文介绍了 GPT-4o 的全能性，它是 OpenAI 首个原生支持音频、视觉和文本实时输入的模型。",
+      length: "阅读耗时 20s",
+      confidence: "99%",
+      highlights: [
+        { label: "关键更新", text: "所有用户（包括免费版）均可获得 GPT-4 级智能。" },
+        { label: "性能指标", text: "在非英语语言的处理速度和效率上有了显著提升。" },
+        { label: "高频词", text: "“Omni”, “Real-time”, “Free users”。" },
+      ],
+    },
+    {
+      title: "开发者对新一代 AI 架构的讨论",
+      summary: "技术社区对 Transformer 架构的最新变体展开热议，重点讨论了推理效率与长上下文窗口的平衡。",
+      length: "阅读耗时 45s",
+      confidence: "92%",
+      highlights: [
+        { label: "讨论焦点", text: "如何将上下文长度扩展到 1M 词元以上而不损失精度。" },
+        { label: "技术趋势", text: "架构正从稠密模型向稀疏模型 (MoE) 全面转型。" },
+        { label: "社区情绪", text: "普遍持乐观态度，但对算力成本表示担忧。" },
+      ],
+    }
+  ],
 };
 
 const buildHighlights = (items) => {
@@ -39,67 +90,55 @@ const buildHighlights = (items) => {
 
 const parseUrl = (input) => {
   const trimmed = input.trim();
-  if (!trimmed) {
-    return null;
-  }
+  if (!trimmed) return null;
 
-  let url;
   try {
-    url = new URL(trimmed);
-  } catch (error) {
+    const url = new URL(trimmed);
+    const host = url.hostname.toLowerCase();
+
+    // YouTube
+    if (host.includes("youtube.com") || host.includes("youtu.be")) {
+      let id = "";
+      if (host.includes("youtu.be")) {
+        id = url.pathname.slice(1);
+      } else if (url.pathname.includes("/shorts/")) {
+        id = url.pathname.split("/").pop();
+      } else {
+        id = url.searchParams.get("v");
+      }
+      return { platform: "YouTube", id };
+    }
+
+    // Twitter / X
+    if (host.includes("twitter.com") || host.includes("x.com")) {
+      const segments = url.pathname.split("/").filter(Boolean);
+      const id = segments[segments.length - 1];
+      return { platform: "Twitter", id };
+    }
+  } catch (e) {
     return null;
   }
-  if (url.hostname.includes("youtube.com") || url.hostname.includes("youtu.be")) {
-    const id = url.hostname.includes("youtu.be")
-      ? url.pathname.replace("/", "")
-      : url.searchParams.get("v");
-    return { platform: "YouTube", id };
-  }
-
-  if (url.hostname.includes("twitter.com") || url.hostname.includes("x.com")) {
-    const segments = url.pathname.split("/").filter(Boolean);
-    const id = segments[segments.length - 1];
-    return { platform: "Twitter", id };
-  }
-
   return null;
 };
 
 const updateCard = ({ platform, id }, detailOverride) => {
-  const insights = {
-    YouTube: {
-      title: "3 个要点快速掌握视频核心",
-      summary:
-        "我们识别出视频主线与转折点，生成浓缩摘要，帮助你快速理解内容价值。",
-      length: "约 4 分钟",
-      highlights: [
-        { label: "核心观点", text: "视频强调结构化表达能提高信息留存。" },
-        { label: "关键数据", text: "平均每 45 秒提出一个关键结论。" },
-        { label: "行动建议", text: "用 3 个问题引导观众理解重点。" },
-      ],
-    },
-    Twitter: {
-      title: "高互动推文的核心摘要",
-      summary:
-        "我们提取推文主题、情绪倾向与高频关键词，生成可复用的内容洞察。",
-      length: "阅读耗时 12 秒",
-      highlights: [
-        { label: "主要话题", text: "讨论 AI 产品发布后的用户反馈。" },
-        { label: "情绪倾向", text: "积极与期待占比超过 70%。" },
-        { label: "高频词", text: "“更新”、“可用性”、“效率”。" },
-      ],
-    },
-  };
+  const pool = insightsDatabase[platform] || [];
+  const randomSample = pool[Math.floor(Math.random() * pool.length)];
+  const detail = detailOverride || randomSample;
 
-  const detail = detailOverride || insights[platform];
   platformChip.textContent = platform;
   platformName.textContent = platform;
-  contentLength.textContent = detail.length;
+  contentLength.textContent = detail.length || "--";
   cardTitle.textContent = detail.title;
   cardSummary.textContent = detail.summary;
   sourceId.textContent = `来源 ID：${id || "--"}`;
   confidence.textContent = `置信度：${detail.confidence || "92%"}`;
   buildHighlights(detail.highlights || []);
+
+  // Trigger animation
+  contentCard.style.animation = 'none';
+  contentCard.offsetHeight; // trigger reflow
+  contentCard.style.animation = null;
 };
 
 const requestAiSummary = async ({ url, platform, id, model, key }) => {
@@ -138,14 +177,27 @@ const handleSubmit = async (event) => {
   event.preventDefault();
   const data = parseUrl(urlInput.value);
   if (!data || !data.id) {
-    status.textContent = "暂不支持的链接，请输入有效的 YouTube 或 Twitter 链接。";
-    status.style.color = "#d14343";
+    status.textContent = "暂不支持的链接，请输入有效的 YouTube 或 Twitter/X 链接。";
+    status.style.color = "#ef4444";
     return;
   }
 
-  status.textContent = "正在解析内容...";
-  status.style.color = "#4c6fff";
+  status.textContent = "正在使用 AI 引擎解析内容...";
+  status.style.color = "var(--primary)";
 
+  // Simulate network delay for "Magical" feel
+  await new Promise(r => setTimeout(r, 1500));
+
+  /**
+   * BACKEND INTEGRATION GUIDE:
+   * To connect a real AI backend (e.g., Node.js + OpenAI/Gemini):
+   * 1. Create a server endpoint (e.g., /api/parse) that accepts a URL.
+   * 2. Use a library like 'puppeteer' or 'cheerio' to scrape the content,
+   *    or use official YouTube/Twitter APIs.
+   * 3. Pass the scraped text to an LLM with a prompt like:
+   *    "Summarize this content into 3 key highlights and a short summary."
+   * 4. Return the result in JSON format matching the 'insightsDatabase' structure.
+   */
   if (parseMode.value === "api") {
     try {
       const result = await requestAiSummary({
@@ -156,17 +208,17 @@ const handleSubmit = async (event) => {
         key: apiKey.value,
       });
       updateCard(data, result);
-      status.textContent = "AI 解析完成，已生成卡片。";
+      status.textContent = "✨ AI 解析完成，卡片已魔法生成！";
       return;
     } catch (error) {
-      status.textContent =
-        "AI API 暂未连接，已回退为示例解析。请配置后端服务。";
-      status.style.color = "#d98324";
+      status.textContent = "⚠️ API 连接失败，已回退至智能模拟模式。";
+      status.style.color = "#f59e0b";
+      await new Promise(r => setTimeout(r, 1000));
     }
   }
 
   updateCard(data);
-  status.textContent = "解析完成，已生成卡片。";
+  status.textContent = "✨ 解析成功！卡片已魔法生成。";
 };
 
 form.addEventListener("submit", handleSubmit);
