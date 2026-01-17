@@ -82,6 +82,58 @@ def summarize_text(text, limit=500):
     return cleaned[:limit] + "..."
 
 
+def get_preferred_transcript_languages():
+    env_langs = os.getenv("TRANSCRIPT_LANGS", "")
+    if env_langs.strip():
+        return [lang.strip() for lang in env_langs.split(",") if lang.strip()]
+    return ["zh-Hans", "zh-CN", "zh", "zh-TW", "en", "en-US", "en-GB"]
+
+
+def fetch_youtube_transcript(video_id):
+    languages = get_preferred_transcript_languages()
+
+    if hasattr(YouTubeTranscriptApi, "get_transcript"):
+        try:
+            return YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
+        except Exception:
+            pass
+
+    try:
+        if hasattr(YouTubeTranscriptApi, "list_transcripts"):
+            transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
+        else:
+            transcripts = YouTubeTranscriptApi().list(video_id)
+    except Exception:
+        raise RuntimeError("未能获取字幕，请确认视频字幕可用。")
+
+    for finder_name in ("find_manually_created_transcript", "find_generated_transcript", "find_transcript"):
+        try:
+            finder = getattr(transcripts, finder_name)
+            transcript = finder(languages)
+            return transcript.fetch()
+        except Exception:
+            pass
+
+    for transcript in transcripts:
+        try:
+            return transcript.fetch()
+        except Exception:
+            pass
+
+    raise RuntimeError("未能获取字幕，请确认视频字幕可用。")
+
+
+def transcript_to_text(transcript_data):
+    def extract_text(item):
+        if isinstance(item, dict):
+            return item.get("text", "")
+        if hasattr(item, "text"):
+            return item.text
+        return ""
+
+    return " ".join([extract_text(item) for item in transcript_data if extract_text(item)])
+
+
 def summarize_with_openai(text, platform):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -308,28 +360,10 @@ def parse_content():
             if not video_id:
                 return jsonify({"error": "Invalid YouTube URL"}), 400
             
-            # Fetch transcript (support multiple library API versions)
-            try:
-                if hasattr(YouTubeTranscriptApi, 'get_transcript'):
-                    transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=['zh-CN', 'en'])
-                else:
-                    raise AttributeError("get_transcript not available")
-            except Exception:
-                if hasattr(YouTubeTranscriptApi, 'list_transcripts'):
-                    transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
-                else:
-                    transcripts = YouTubeTranscriptApi().list(video_id)
-                transcript = transcripts.find_transcript(['zh-Hans', 'zh-CN', 'en'])
-                transcript_data = transcript.fetch()
-            
-            def extract_text(item):
-                if isinstance(item, dict):
-                    return item.get('text', '')
-                if hasattr(item, 'text'):
-                    return item.text
-                return ''
-
-            full_text = " ".join([extract_text(item) for item in transcript_data if extract_text(item)])
+            transcript_data = fetch_youtube_transcript(video_id)
+            full_text = transcript_to_text(transcript_data)
+            if not full_text:
+                raise RuntimeError("未能获取字幕，请确认视频字幕可用。")
             summary_data = build_youtube_summary(full_text)
 
             # For this prototype, we return the transcript length and summary

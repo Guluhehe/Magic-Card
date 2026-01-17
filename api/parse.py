@@ -6,8 +6,10 @@ from server import (
     build_twitter_summary,
     build_youtube_summary,
     extract_youtube_id,
+    fetch_youtube_transcript,
     fetch_twitter_text,
     parse_cookie_header,
+    transcript_to_text,
 )
 
 
@@ -48,32 +50,10 @@ class handler(BaseHTTPRequestHandler):
                     self._send_json({"error": "Invalid YouTube URL"}, 400)
                     return
 
-                try:
-                    if hasattr(YouTubeTranscriptApi, "get_transcript"):
-                        transcript_data = YouTubeTranscriptApi.get_transcript(
-                            video_id,
-                            languages=["zh-CN", "en"],
-                        )
-                    else:
-                        raise AttributeError("get_transcript not available")
-                except Exception:
-                    if hasattr(YouTubeTranscriptApi, "list_transcripts"):
-                        transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
-                    else:
-                        transcripts = YouTubeTranscriptApi().list(video_id)
-                    transcript = transcripts.find_transcript(["zh-Hans", "zh-CN", "en"])
-                    transcript_data = transcript.fetch()
-
-                def extract_text(item):
-                    if isinstance(item, dict):
-                        return item.get("text", "")
-                    if hasattr(item, "text"):
-                        return item.text
-                    return ""
-
-                full_text = " ".join(
-                    [extract_text(item) for item in transcript_data if extract_text(item)]
-                )
+                transcript_data = fetch_youtube_transcript(video_id)
+                full_text = transcript_to_text(transcript_data)
+                if not full_text:
+                    raise RuntimeError("未能获取字幕，请确认视频字幕可用。")
                 summary_data = build_youtube_summary(full_text)
 
                 self._send_json(
@@ -112,7 +92,6 @@ class handler(BaseHTTPRequestHandler):
                     "snscrape": "80%",
                     "playwright": "60%",
                 }
-                method_label = method_labels.get(method, "未知方式")
                 confidence = confidences.get(method, "70%")
                 self._send_json(
                     {
