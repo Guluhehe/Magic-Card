@@ -355,6 +355,19 @@ button.ghost:hover {
   letter-spacing: 0.02em;
 }
 
+.card-header .time.is-logo {
+  color: #1da1f2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card-header .time.is-logo .platform-logo {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+
 .content-card h3 {
   font-size: 22px;
   line-height: 1.3;
