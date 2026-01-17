@@ -1,7 +1,8 @@
 import json
 import os
 import re
-from urllib.parse import urlparse
+import xml.etree.ElementTree as ET
+from urllib.parse import quote, urlparse
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -121,6 +122,45 @@ def parse_caption_text(raw_text):
     return [{"text": line} for line in lines]
 
 
+def fetch_youtube_transcript_timedtext(video_id, languages):
+    list_url = f"https://video.google.com/timedtext?type=list&v={video_id}"
+    response = requests.get(list_url, timeout=10)
+    if not response.ok:
+        raise RuntimeError(f"{list_url} -> {response.status_code}")
+    try:
+        root = ET.fromstring(response.text)
+    except Exception as exc:
+        raise RuntimeError(f"{list_url} -> xml parse failed: {exc}")
+
+    tracks = root.findall("track")
+    if not tracks:
+        raise RuntimeError(f"{list_url} -> empty tracks")
+
+    def pick_match():
+        for lang in languages:
+            for track in tracks:
+                code = track.get("lang_code") or ""
+                if code.lower().startswith(lang.lower()):
+                    return track
+        return tracks[0]
+
+    track = pick_match()
+    lang_code = track.get("lang_code")
+    name = track.get("name")
+    if not lang_code:
+        raise RuntimeError(f"{list_url} -> missing lang_code")
+    caption_url = f"https://video.google.com/timedtext?lang={quote(lang_code)}&v={video_id}&fmt=vtt"
+    if name:
+        caption_url = f"{caption_url}&name={quote(name)}"
+    response = requests.get(caption_url, timeout=10)
+    if not response.ok:
+        raise RuntimeError(f"{caption_url} -> {response.status_code}")
+    transcript = parse_caption_text(response.text)
+    if transcript:
+        return transcript
+    raise RuntimeError(f"{caption_url} -> empty transcript")
+
+
 def fetch_youtube_transcript_piped(video_id, languages):
     instances = get_piped_instances()
     last_error = None
@@ -224,6 +264,7 @@ def fetch_youtube_transcript(video_id):
     languages = get_preferred_transcript_languages()
     debug = is_debug_enabled()
     last_error = None
+    timedtext_error = None
     piped_error = None
     lemnos_error = None
 
@@ -258,6 +299,11 @@ def fetch_youtube_transcript(video_id):
                 last_error = exc
 
     try:
+        return fetch_youtube_transcript_timedtext(video_id, languages)
+    except Exception as exc:
+        timedtext_error = exc
+
+    try:
         return fetch_youtube_transcript_piped(video_id, languages)
     except Exception as exc:
         piped_error = exc
@@ -272,6 +318,8 @@ def fetch_youtube_transcript(video_id):
         details = []
         if last_error:
             details.append(f"youtube_error={last_error}")
+        if timedtext_error:
+            details.append(f"timedtext_error={timedtext_error}")
         if piped_error:
             details.append(f"piped_error={piped_error}")
         if lemnos_error:
