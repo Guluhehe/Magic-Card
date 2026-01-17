@@ -16,6 +16,7 @@ const accentColor = document.getElementById("accent-color");
 const density = document.getElementById("density");
 const showHighlights = document.getElementById("show-highlights");
 const contentCard = document.getElementById("content-card");
+const outputPanel = document.getElementById("output-panel"); // New
 const quickActions = document.querySelectorAll(".quick-actions button");
 
 const sampleUrls = {
@@ -197,6 +198,7 @@ const handleSubmit = async (event) => {
       });
       updateCard(data, result);
       status.textContent = "✨ 原始内容抓取成功！AI 已就绪（已连接真实后端）。";
+      outputPanel.classList.remove("hidden"); // Show result
       return;
     } catch (error) {
       console.error(error);
@@ -208,6 +210,7 @@ const handleSubmit = async (event) => {
 
   updateCard(data);
   status.textContent = "✨ 解析成功！卡片已魔法生成 (展示模式)。";
+  outputPanel.classList.remove("hidden"); // Show result
 };
 
 form.addEventListener("submit", handleSubmit);
