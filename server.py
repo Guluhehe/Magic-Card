@@ -1,9 +1,20 @@
+import json
+import os
 import re
 from urllib.parse import urlparse
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from youtube_transcript_api import YouTubeTranscriptApi
 import requests
+
+# Load environment variables from .env file if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # python-dotenv is optional, env vars can be set manually
+    pass
+
 
 app = Flask(__name__)
 CORS(app)
@@ -69,6 +80,92 @@ def summarize_text(text, limit=500):
     if len(cleaned) <= limit:
         return cleaned
     return cleaned[:limit] + "..."
+
+
+def summarize_with_openai(text, platform):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    try:
+        from openai import OpenAI
+    except Exception:
+        return None
+
+    client = OpenAI(api_key=api_key)
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    max_chars = int(os.getenv("SUMMARY_INPUT_CHARS", "12000"))
+    snippet = text[:max_chars]
+
+    system_prompt = (
+        "你是内容总结助手，请用中文输出精简摘要，并给出 3 条要点。"
+        "返回 JSON 格式：{\"summary\":\"...\",\"highlights\":[{\"label\":\"...\",\"text\":\"...\"}]}"
+        "label 要简短。保留原文专有名词。"
+    )
+    user_prompt = f"平台：{platform}\n内容：{snippet}"
+
+    try:
+        response = client.responses.create(
+            model=model,
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+        )
+        content = response.output_text
+    except Exception:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+            )
+            content = response.choices[0].message.content
+        except Exception:
+            return None
+
+    try:
+        data = json.loads(content)
+    except Exception:
+        return None
+
+    summary = str(data.get("summary", "")).strip()
+    raw_highlights = data.get("highlights", [])
+    if not summary or not isinstance(raw_highlights, list):
+        return None
+
+    highlights = []
+    for item in raw_highlights:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label", "")).strip()
+        text_item = str(item.get("text", "")).strip()
+        if label and text_item:
+            highlights.append({"label": label, "text": text_item})
+
+    if not highlights:
+        return None
+
+    return {"summary": summary, "highlights": highlights[:3]}
+
+
+def build_youtube_summary(text):
+    if not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError("未配置 OPENAI_API_KEY，YouTube 总结需要 AI Key。")
+    llm_summary = summarize_with_openai(text, "YouTube")
+    if not llm_summary:
+        raise RuntimeError("AI 总结失败，请检查 Key 或额度。")
+    return llm_summary
+
+
+def build_twitter_summary(text):
+    summary = summarize_text(text, limit=500)
+    highlights = [{"label": "原文", "text": summarize_text(text, limit=120)}]
+    return {"summary": summary, "highlights": highlights}
 
 
 def fetch_twitter_via_fixtweet(tweet_id):
@@ -192,12 +289,7 @@ def fetch_twitter_text(url, cookie_map=None):
     except Exception:
         pass
 
-    # 最终降级：返回高质量模拟数据（告知用户真实抓取失败）
-    return (
-        f"推文 {tweet_id} (演示数据)",
-        "真实抓取暂时不可用。Twitter/X 已加强反爬限制，FixTweet/Syndication API 等第三方服务可能受影响。若需真实数据，建议：1) 使用官方 Twitter API（付费）；2) 本地配置 Cookie 认证；3) 等待第三方服务恢复。",
-        "mock_fallback"
-    )
+    raise RuntimeError("tweet-text-not-found")
 
 
 @app.route('/api/parse', methods=['POST'])
@@ -239,19 +331,15 @@ def parse_content():
                 return ''
 
             full_text = " ".join([extract_text(item) for item in transcript_data if extract_text(item)])
-            
-            # For this prototype, we return the transcript length and a few snippets
-            # In a full version, this 'full_text' would be sent to Gemini/OpenAI
+            summary_data = build_youtube_summary(full_text)
+
+            # For this prototype, we return the transcript length and summary
             return jsonify({
                 "title": "YouTube 视频内容实时解析 (Real Prototype)",
-                "summary": f"已成功捕获字幕。全文平均长度约 {len(full_text)} 字符。AI 引擎现在可以阅读这段内容并进行总结了。",
+                "summary": summary_data.get("summary", ""),
                 "length": f"{len(full_text) // 1000}k 字符",
                 "confidence": "100% (Direct Extraction)",
-                "highlights": [
-                    {"label": "抓取状态", "text": "字幕提取成功，无需 API Key。"},
-                    {"label": "首段预览", "text": full_text[:100] + "..."},
-                    {"label": "后续步骤", "text": "接下来可以将此文本喂给 LLM API 进行格式化总结。"}
-                ]
+                "highlights": summary_data.get("highlights", [])
             })
 
         elif platform == 'Twitter':
@@ -266,32 +354,29 @@ def parse_content():
                 twitter_cookies.setdefault("ct0", data.get("ct0"))
 
             title, text, method = fetch_twitter_text(url, twitter_cookies)
+            summary_data = build_twitter_summary(text)
             method_labels = {
                 "fixtweet": "FixTweet API（推荐）",
                 "syndication": "Syndication API（不稳定）",
                 "snscrape": "snscrape 抓取",
                 "playwright": "Playwright DOM 抓取（兜底）",
-                "mock_fallback": "演示数据（真实抓取失败）",
             }
             confidences = {
                 "fixtweet": "95%",
                 "syndication": "75%",
                 "snscrape": "80%",
                 "playwright": "60%",
-                "mock_fallback": "0% (Mock)",
             }
             method_label = method_labels.get(method, "未知方式")
             confidence = confidences.get(method, "70%")
+            highlights = list(summary_data.get("highlights", []))
+            highlights.append({"label": "抓取方式", "text": method_label})
             return jsonify({
                 "title": title,
-                "summary": summarize_text(text),
+                "summary": summary_data.get("summary", ""),
                 "length": f"{len(text)} 字符",
                 "confidence": confidence,
-                "highlights": [
-                    {"label": "抓取方式", "text": method_label},
-                    {"label": "原文片段", "text": summarize_text(text, 120)},
-                    {"label": "提示", "text": "若提示登录或无文本，可传 auth_token/ct0 或完整 Cookie。"}
-                ]
+                "highlights": highlights
             })
 
         return jsonify({"error": "Unsupported platform"}), 400
