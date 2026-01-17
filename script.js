@@ -198,7 +198,9 @@ const handleSubmit = async (event) => {
       });
       updateCard(data, result);
       status.textContent = "✨ 原始内容抓取成功！AI 已就绪（已连接真实后端）。";
-      outputPanel.classList.remove("hidden"); // Show result
+      outputPanel.classList.remove("hidden");
+      outputPanel.classList.add("visible");
+      outputPanel.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     } catch (error) {
       console.error(error);
@@ -210,7 +212,9 @@ const handleSubmit = async (event) => {
 
   updateCard(data);
   status.textContent = "✨ 解析成功！卡片已魔法生成 (展示模式)。";
-  outputPanel.classList.remove("hidden"); // Show result
+  outputPanel.classList.remove("hidden");
+  outputPanel.classList.add("visible");
+  outputPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 };
 
 form.addEventListener("submit", handleSubmit);
