@@ -1,18 +1,12 @@
 {
-  "version": 2,
-  "builds": [
+  "rewrites": [
     {
-      "src": "server.py",
-      "use": "@vercel/python"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "server.py"
+      "source": "/api/:path*",
+      "destination": "/api/:path*"
     }
   ],
   "env": {
-    "VERCEL": "1"
+    "VERCEL": "1",
+    "SKIP_SLOW_METHODS": "1"
   }
 }
