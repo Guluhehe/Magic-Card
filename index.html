@@ -41,35 +41,13 @@
     <main class="workspace">
       <section class="input-panel">
         <h2>开始解析</h2>
-        <p class="helper">支持 YouTube 视频或 Twitter 推文链接。</p>
+        <p class="helper">支持 YouTube 视频或 Twitter 推文链接（需本地后端服务）。</p>
         <form id="parser-form">
           <label for="url-input">链接地址</label>
           <div class="input-group">
             <input id="url-input" type="url" placeholder="粘贴链接，例如 https://www.youtube.com/watch?v=xxxx" required />
             <button type="submit">生成卡片</button>
           </div>
-
-          <details class="advanced-settings">
-            <summary>高级设置 (开发者选项)</summary>
-            <div class="config-grid">
-              <div class="field">
-                <label for="parse-mode">解析方式</label>
-                <select id="parse-mode">
-                  <option value="mock">智能模拟 (无需后端)</option>
-                  <option value="api">真实抓取 (需运行 server.py)</option>
-                </select>
-              </div>
-              <!-- Hidden model/key fields as they are not used in current Phase 2 local backend setup -->
-              <div class="field hidden-field">
-                <label for="model-name">模型</label>
-                <input id="model-name" type="text" placeholder="例如 gpt-4o-mini" />
-              </div>
-              <div class="field hidden-field">
-                <label for="api-key">API Key</label>
-                <input id="api-key" type="password" placeholder="仅本地测试使用" />
-              </div>
-            </div>
-          </details>
         </form>
         <div class="quick-actions">
           <span class="actions-label">试试看：</span>
@@ -120,11 +98,13 @@
             <span id="source-id">来源 ID：--</span>
             <span id="confidence">置信度：--</span>
           </div>
+          <button class="download-btn" id="download-card" type="button">Download</button>
         </div>
       </section>
     </main>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script src="script.js"></script>
 </body>
 

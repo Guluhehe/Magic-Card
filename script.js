@@ -9,70 +9,17 @@ const cardSummary = document.getElementById("card-summary");
 const cardHighlights = document.getElementById("card-highlights");
 const sourceId = document.getElementById("source-id");
 const confidence = document.getElementById("confidence");
-const parseMode = document.getElementById("parse-mode");
-const modelName = document.getElementById("model-name");
-const apiKey = document.getElementById("api-key");
 const accentColor = document.getElementById("accent-color");
 const density = document.getElementById("density");
 const showHighlights = document.getElementById("show-highlights");
 const contentCard = document.getElementById("content-card");
 const outputPanel = document.getElementById("output-panel"); // New
+const downloadButton = document.getElementById("download-card");
 const quickActions = document.querySelectorAll(".quick-actions button");
 
 const sampleUrls = {
   youtube: "https://www.youtube.com/watch?v=NjYt_7R-1Dk",
   twitter: "https://x.com/OpenAI/status/1790432049117327631",
-};
-
-const insightsDatabase = {
-  YouTube: [
-    {
-      title: "GPT-4o 交互演示：AI 的未来已来",
-      summary: "OpenAI 发布的 GPT-4o 展示了极低延迟的语音交互和视觉情感识别能力，标志着实时多模态 AI 进入新纪元。",
-      length: "14:28",
-      confidence: "98%",
-      highlights: [
-        { label: "核心技术", text: "模型实现了端到端的语音处理，延迟降低至 232 毫秒。" },
-        { label: "交互突破", text: "AI 现在能实时感知识别用户的呼吸、语调变化及面部表情。" },
-        { label: "应用场景", text: "展示了作为实时翻译官、数学助教及视障人士助手的巨大潜力。" },
-      ],
-    },
-    {
-      title: "如何利用 AI 工具实现 10 倍生产力",
-      summary: "本视频深入探讨了如何整合 Cursor, Perplexity 和 Gamma 等工具，构建自动化工作流。重点在于提示词工程的实战应用。",
-      length: "08:45",
-      confidence: "95%",
-      highlights: [
-        { label: "工具链", text: "推荐使用 Cursor 进行代码补全，Perplexity 进行深度搜索。" },
-        { label: "核心策略", text: "‘AI-First’ 思维，先让 AI 搭框架，人再填肉。" },
-        { label: "避坑指南", text: "警惕 AI 幻觉，所有关键结论必须由人类二次验证。" },
-      ],
-    }
-  ],
-  Twitter: [
-    {
-      title: "OpenAI 发布 GPT-4o 总览",
-      summary: "推文介绍了 GPT-4o 的全能性，它是 OpenAI 首个原生支持音频、视觉和文本实时输入的模型。",
-      length: "阅读耗时 20s",
-      confidence: "99%",
-      highlights: [
-        { label: "关键更新", text: "所有用户（包括免费版）均可获得 GPT-4 级智能。" },
-        { label: "性能指标", text: "在非英语语言的处理速度和效率上有了显著提升。" },
-        { label: "高频词", text: "“Omni”, “Real-time”, “Free users”。" },
-      ],
-    },
-    {
-      title: "开发者对新一代 AI 架构的讨论",
-      summary: "技术社区对 Transformer 架构的最新变体展开热议，重点讨论了推理效率与长上下文窗口的平衡。",
-      length: "阅读耗时 45s",
-      confidence: "92%",
-      highlights: [
-        { label: "讨论焦点", text: "如何将上下文长度扩展到 1M 词元以上而不损失精度。" },
-        { label: "技术趋势", text: "架构正从稠密模型向稀疏模型 (MoE) 全面转型。" },
-        { label: "社区情绪", text: "普遍持乐观态度，但对算力成本表示担忧。" },
-      ],
-    }
-  ],
 };
 
 const buildHighlights = (items) => {
@@ -122,16 +69,14 @@ const parseUrl = (input) => {
   return null;
 };
 
-const updateCard = ({ platform, id }, detailOverride) => {
-  const pool = insightsDatabase[platform] || [];
-  const randomSample = pool[Math.floor(Math.random() * pool.length)];
-  const detail = detailOverride || randomSample;
+const updateCard = ({ platform, id }, detail = {}) => {
+  if (!detail) return;
 
   platformChip.textContent = platform;
   platformName.textContent = platform;
   contentLength.textContent = detail.length || "--";
-  cardTitle.textContent = detail.title;
-  cardSummary.textContent = detail.summary;
+  cardTitle.textContent = detail.title || "抓取结果";
+  cardSummary.textContent = detail.summary || "暂无摘要信息。";
   sourceId.textContent = `来源 ID：${id || "--"}`;
   confidence.textContent = `置信度：${detail.confidence || "92%"}`;
   buildHighlights(detail.highlights || []);
@@ -142,9 +87,19 @@ const updateCard = ({ platform, id }, detailOverride) => {
   contentCard.style.animation = null;
 };
 
-const requestAiSummary = async ({ url, platform, id, model, key }) => {
-  // Point to our local Phase 2 Python Backend
-  const response = await fetch("http://127.0.0.1:5000/api/parse", {
+const getApiBase = () => {
+  const host = window.location.hostname;
+  const protocol = window.location.protocol;
+  const isLocal =
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    protocol === "file:";
+  return isLocal ? "http://127.0.0.1:5000" : "";
+};
+
+const requestAiSummary = async ({ url, platform, id }) => {
+  const apiBase = getApiBase();
+  const response = await fetch(`${apiBase}/api/parse`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -174,52 +129,76 @@ const applyCardStyles = () => {
   cardHighlights.classList.toggle("hidden", highlightMode === "hide");
 };
 
+const downloadCard = async () => {
+  if (!outputPanel.classList.contains("visible")) {
+    status.textContent = "请先生成卡片再下载。";
+    status.style.color = "#ef4444";
+    return;
+  }
+  if (typeof html2canvas === "undefined") {
+    status.textContent = "下载组件未加载，请刷新页面再试。";
+    status.style.color = "#ef4444";
+    return;
+  }
+
+  downloadButton.disabled = true;
+  contentCard.classList.add("is-capturing");
+  try {
+    const canvas = await html2canvas(contentCard, { backgroundColor: null, scale: 2 });
+    const link = document.createElement("a");
+    link.href = canvas.toDataURL("image/png");
+    link.download = "magiccard.png";
+    link.click();
+  } catch (error) {
+    console.error(error);
+    status.textContent = "⚠️ 下载失败，请重试。";
+    status.style.color = "#ef4444";
+  } finally {
+    contentCard.classList.remove("is-capturing");
+    downloadButton.disabled = false;
+  }
+};
+
 const handleSubmit = async (event) => {
   event.preventDefault();
   const data = parseUrl(urlInput.value);
   if (!data || !data.id) {
     status.textContent = "暂不支持的链接，请输入有效的 YouTube 或 Twitter/X 链接。";
     status.style.color = "#ef4444";
+    downloadButton.disabled = true;
     return;
   }
 
-  status.textContent = "正在通过后端引擎提取内容 (Phase 2 Real Extract)...";
+  status.textContent = "正在抓取内容，请稍候...";
   status.style.color = "var(--primary)";
 
-  const targetMode = parseMode.value;
-
-  if (targetMode === "api") {
-    try {
-      const result = await requestAiSummary({
-        url: urlInput.value,
-        platform: data.platform,
-        id: data.id,
-      });
-      updateCard(data, result);
-      status.textContent = "✨ 原始内容抓取成功！AI 已就绪（已连接真实后端）。";
-      outputPanel.classList.remove("hidden");
-      outputPanel.classList.add("visible");
-      outputPanel.scrollIntoView({ behavior: "smooth", block: "start" });
-      return;
-    } catch (error) {
-      console.error(error);
-      status.textContent = `⚠️ 内容提取失败: ${error.message}。已回退至演示模式。`;
-      status.style.color = "#f59e0b";
-      await new Promise(r => setTimeout(r, 2000));
-    }
+  try {
+    const result = await requestAiSummary({
+      url: urlInput.value,
+      platform: data.platform,
+      id: data.id,
+    });
+    updateCard(data, result);
+    status.textContent = "✨ 抓取成功！卡片已生成。";
+    outputPanel.classList.remove("hidden");
+    outputPanel.classList.add("visible");
+    outputPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    downloadButton.disabled = false;
+  } catch (error) {
+    console.error(error);
+    status.textContent = `⚠️ 抓取失败: ${error.message}。`;
+    status.style.color = "#ef4444";
+    outputPanel.classList.add("hidden");
+    outputPanel.classList.remove("visible");
+    downloadButton.disabled = true;
   }
-
-  updateCard(data);
-  status.textContent = "✨ 解析成功！卡片已魔法生成 (展示模式)。";
-  outputPanel.classList.remove("hidden");
-  outputPanel.classList.add("visible");
-  outputPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 };
 
 form.addEventListener("submit", handleSubmit);
 accentColor.addEventListener("input", applyCardStyles);
 density.addEventListener("change", applyCardStyles);
 showHighlights.addEventListener("change", applyCardStyles);
+downloadButton.addEventListener("click", downloadCard);
 
 quickActions.forEach((button) => {
   button.addEventListener("click", () => {
@@ -231,3 +210,4 @@ quickActions.forEach((button) => {
 });
 
 applyCardStyles();
+downloadButton.disabled = true;

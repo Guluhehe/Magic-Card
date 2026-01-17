@@ -40,7 +40,7 @@ pip install -r requirements.txt
 
 ### 3. 配置环境变量（重要！🔒）
 
-**⚠️ 安全警告**：永远不要将 API Key 提交到 Git！详见 [SECURITY.md](SECURITY.md)
+**⚠️ 安全提示**：敏感信息仅放在本地或服务端环境变量中，详见 [SECURITY.md](SECURITY.md)
 
 **方法 A：使用 .env 文件（推荐）**
 
@@ -48,28 +48,24 @@ pip install -r requirements.txt
 # 1. 复制模板
 cp .env.example .env
 
-# 2. 编辑 .env 文件，填入你的真实 API Key
+# 2. 编辑 .env 文件，填入你的 Key
 nano .env
 ```
 
 在 `.env` 中填写：
 ```env
-OPENAI_API_KEY=sk-proj-your-actual-key-here
+OPENAI_API_KEY=your_api_key
 OPENAI_MODEL=gpt-4o-mini
 ```
 
 **方法 B：直接导出环境变量**
 
 ```bash
-export OPENAI_API_KEY="sk-proj-your-actual-key-here"
+export OPENAI_API_KEY="your_api_key"
 export OPENAI_MODEL="gpt-4o-mini"
 ```
 
-**获取 OpenAI API Key**：
-1. 访问 https://platform.openai.com/api-keys
-2. 创建新密钥
-3. 复制密钥（只显示一次）
-4. **设置使用限额**防止意外消费
+如需更严格的安全与部署建议，请参考 [SECURITY.md](SECURITY.md)。
 
 ### 4. 启动后端服务
 
