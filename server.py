@@ -177,6 +177,7 @@ def fetch_youtube_transcript(video_id):
     languages = get_preferred_transcript_languages()
     debug = is_debug_enabled()
     last_error = None
+    piped_error = None
 
     if hasattr(YouTubeTranscriptApi, "get_transcript"):
         try:
@@ -184,39 +185,44 @@ def fetch_youtube_transcript(video_id):
         except Exception as exc:
             last_error = exc
 
+    transcripts = None
     try:
         if hasattr(YouTubeTranscriptApi, "list_transcripts"):
             transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
         else:
             transcripts = YouTubeTranscriptApi().list(video_id)
     except Exception as exc:
-        message = "未能获取字幕，请确认视频字幕可用。"
-        if debug and exc:
-            message = f"{message} ({exc})"
-        raise RuntimeError(message)
+        last_error = exc
 
-    for finder_name in ("find_manually_created_transcript", "find_generated_transcript", "find_transcript"):
-        try:
-            finder = getattr(transcripts, finder_name)
-            transcript = finder(languages)
-            return transcript.fetch()
-        except Exception as exc:
-            last_error = exc
+    if transcripts:
+        for finder_name in ("find_manually_created_transcript", "find_generated_transcript", "find_transcript"):
+            try:
+                finder = getattr(transcripts, finder_name)
+                transcript = finder(languages)
+                return transcript.fetch()
+            except Exception as exc:
+                last_error = exc
 
-    for transcript in transcripts:
-        try:
-            return transcript.fetch()
-        except Exception as exc:
-            last_error = exc
+        for transcript in transcripts:
+            try:
+                return transcript.fetch()
+            except Exception as exc:
+                last_error = exc
 
     try:
         return fetch_youtube_transcript_piped(video_id, languages)
     except Exception as exc:
-        last_error = exc
+        piped_error = exc
 
     message = "未能获取字幕，请确认视频字幕可用。"
-    if debug and last_error:
-        message = f"{message} ({last_error})"
+    if debug:
+        details = []
+        if last_error:
+            details.append(f"youtube_error={last_error}")
+        if piped_error:
+            details.append(f"piped_error={piped_error}")
+        if details:
+            message = f"{message} ({'; '.join(details)})"
     raise RuntimeError(message)
 
 
