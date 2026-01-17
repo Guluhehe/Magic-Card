@@ -412,20 +412,51 @@ def fetch_youtube_transcript_lemnos(video_id, languages):
 
 
 def fetch_youtube_transcript(video_id):
+    """
+    多级降级策略获取 YouTube 字幕
+    在 Vercel 环境中会跳过慢速方法以避免超时
+    """
     languages = get_preferred_transcript_languages()
     debug = is_debug_enabled()
+    
+    # Vercel 环境优化：只使用快速方法，避免 10 秒超时
+    is_vercel = os.getenv("VERCEL") == "1"
+    skip_slow = os.getenv("SKIP_SLOW_METHODS", "").lower() in ("1", "true", "yes")
+    
+    if is_vercel or skip_slow:
+        # 方法 1: 官方库（最快，优先）
+        if hasattr(YouTubeTranscriptApi, "get_transcript"):
+            try:
+                return YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
+            except Exception:
+                pass
+        
+        # 方法 2: Player API（备选）
+        try:
+            return fetch_youtube_transcript_player(video_id, languages)
+        except Exception:
+            pass
+        
+        # 方法 3: Lemnos（快速第三方 API）
+        try:
+            return fetch_youtube_transcript_lemnos(video_id, languages)
+        except Exception:
+            pass
+        
+        # Vercel 环境下只尝试快速方法，失败则放弃
+        raise RuntimeError("字幕获取失败（Vercel 快速模式），请确认视频有字幕")
+    
+    # 本地环境：使用完整的降级策略
     last_error = None
-    player_error = None
-    timedtext_error = None
-    piped_error = None
-    lemnos_error = None
-
+    
+    # 尝试 1: 官方库
     if hasattr(YouTubeTranscriptApi, "get_transcript"):
         try:
             return YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
         except Exception as exc:
             last_error = exc
-
+    
+    # 尝试 2: list_transcripts
     transcripts = None
     try:
         if hasattr(YouTubeTranscriptApi, "list_transcripts"):
@@ -434,7 +465,7 @@ def fetch_youtube_transcript(video_id):
             transcripts = YouTubeTranscriptApi().list(video_id)
     except Exception as exc:
         last_error = exc
-
+    
     if transcripts:
         for finder_name in ("find_manually_created_transcript", "find_generated_transcript", "find_transcript"):
             try:
@@ -443,48 +474,41 @@ def fetch_youtube_transcript(video_id):
                 return transcript.fetch()
             except Exception as exc:
                 last_error = exc
-
+        
         for transcript in transcripts:
             try:
                 return transcript.fetch()
             except Exception as exc:
                 last_error = exc
-
+    
+    # 尝试 3: Player API
     try:
         return fetch_youtube_transcript_player(video_id, languages)
     except Exception as exc:
-        player_error = exc
-
+        last_error = exc
+    
+    # 尝试 4: TimedText API
     try:
         return fetch_youtube_transcript_timedtext(video_id, languages)
     except Exception as exc:
-        timedtext_error = exc
-
+        last_error = exc
+    
+    # 尝试 5: Piped（慢）
     try:
         return fetch_youtube_transcript_piped(video_id, languages)
     except Exception as exc:
-        piped_error = exc
-
+        last_error = exc
+    
+    # 尝试 6: Lemnos
     try:
         return fetch_youtube_transcript_lemnos(video_id, languages)
     except Exception as exc:
-        lemnos_error = exc
-
+        last_error = exc
+    
+    # 所有方法失败
     message = "未能获取字幕，请确认视频字幕可用。"
-    if debug:
-        details = []
-        if last_error:
-            details.append(f"youtube_error={last_error}")
-        if player_error:
-            details.append(f"player_error={player_error}")
-        if timedtext_error:
-            details.append(f"timedtext_error={timedtext_error}")
-        if piped_error:
-            details.append(f"piped_error={piped_error}")
-        if lemnos_error:
-            details.append(f"lemnos_error={lemnos_error}")
-        if details:
-            message = f"{message} ({'; '.join(details)})"
+    if debug and last_error:
+        message = f"{message} (last_error: {last_error})"
     raise RuntimeError(message)
 
 
