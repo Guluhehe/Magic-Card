@@ -114,16 +114,13 @@ class handler(BaseHTTPRequestHandler):
                 }
                 method_label = method_labels.get(method, "未知方式")
                 confidence = confidences.get(method, "70%")
-                highlights = list(summary_data.get("highlights", []))
-                highlights.append({"label": "抓取方式", "text": method_label})
-
                 self._send_json(
                     {
                         "title": title,
                         "summary": summary_data.get("summary", ""),
                         "length": f"{len(text)} 字符",
                         "confidence": confidence,
-                        "highlights": highlights,
+                        "highlights": summary_data.get("highlights", []),
                     }
                 )
                 return

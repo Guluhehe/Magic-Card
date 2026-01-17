@@ -142,7 +142,7 @@ const downloadCard = async () => {
     status.style.color = "#ef4444";
     return;
   }
-  if (typeof html2canvas === "undefined") {
+  if (typeof htmlToImage === "undefined") {
     status.textContent = "下载组件未加载，请刷新页面再试。";
     status.style.color = "#ef4444";
     return;
@@ -151,16 +151,24 @@ const downloadCard = async () => {
   downloadButton.disabled = true;
   contentCard.classList.add("is-capturing");
   try {
-    const scale = Math.min(4, Math.max(2, window.devicePixelRatio * 2));
-    const canvas = await html2canvas(contentCard, {
+    if (document.fonts && document.fonts.ready) {
+      await document.fonts.ready;
+    }
+    const pixelRatio = Math.min(4, Math.max(2, window.devicePixelRatio * 2));
+    const blob = await htmlToImage.toBlob(contentCard, {
       backgroundColor: null,
-      scale,
-      useCORS: true,
+      cacheBust: true,
+      pixelRatio,
     });
+    if (!blob) {
+      throw new Error("download-blob-empty");
+    }
     const link = document.createElement("a");
-    link.href = canvas.toDataURL("image/png");
+    const objectUrl = URL.createObjectURL(blob);
+    link.href = objectUrl;
     link.download = "magiccard.png";
     link.click();
+    URL.revokeObjectURL(objectUrl);
   } catch (error) {
     console.error(error);
     status.textContent = "⚠️ 下载失败，请重试。";
