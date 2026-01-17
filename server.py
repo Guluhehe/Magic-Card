@@ -1,3 +1,4 @@
+import html
 import json
 import os
 import re
@@ -122,43 +123,115 @@ def parse_caption_text(raw_text):
     return [{"text": line} for line in lines]
 
 
+def parse_caption_xml(raw_text):
+    lines = []
+    root = ET.fromstring(raw_text)
+    for node in root.findall(".//text"):
+        if node.text:
+            lines.append(html.unescape(node.text.replace("\n", " ")).strip())
+    return [{"text": line} for line in lines if line]
+
+
+def parse_caption_payload(raw_text):
+    text = raw_text.strip()
+    if not text:
+        return []
+    if "WEBVTT" in text:
+        return parse_caption_text(text)
+    if text.startswith("<"):
+        try:
+            return parse_caption_xml(text)
+        except Exception:
+            return []
+    return parse_caption_text(text)
+
+
+def get_youtube_headers():
+    return {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/121.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+        "Accept": "*/*",
+    }
+
+
 def fetch_youtube_transcript_timedtext(video_id, languages):
-    list_url = f"https://video.google.com/timedtext?type=list&v={video_id}"
-    response = requests.get(list_url, timeout=10)
-    if not response.ok:
-        raise RuntimeError(f"{list_url} -> {response.status_code}")
-    try:
-        root = ET.fromstring(response.text)
-    except Exception as exc:
-        raise RuntimeError(f"{list_url} -> xml parse failed: {exc}")
+    headers = get_youtube_headers()
+    bases = [
+        "https://video.google.com/timedtext",
+        "https://www.youtube.com/api/timedtext",
+    ]
+    errors = []
 
-    tracks = root.findall("track")
-    if not tracks:
-        raise RuntimeError(f"{list_url} -> empty tracks")
+    for base in bases:
+        list_url = f"{base}?type=list&v={video_id}"
+        try:
+            response = requests.get(list_url, headers=headers, timeout=10)
+            if not response.ok:
+                errors.append(RuntimeError(f"{list_url} -> {response.status_code}"))
+                continue
+            if not response.text.strip():
+                errors.append(RuntimeError(f"{list_url} -> empty response"))
+                continue
+            root = ET.fromstring(response.text)
+            tracks = root.findall("track")
+            if not tracks:
+                errors.append(RuntimeError(f"{list_url} -> empty tracks"))
+                continue
 
-    def pick_match():
+            def pick_match():
+                for lang in languages:
+                    for track in tracks:
+                        code = track.get("lang_code") or ""
+                        if code.lower().startswith(lang.lower()):
+                            return track
+                return tracks[0]
+
+            track = pick_match()
+            lang_code = track.get("lang_code")
+            name = track.get("name")
+            kind = track.get("kind")
+            if not lang_code:
+                errors.append(RuntimeError(f"{list_url} -> missing lang_code"))
+                continue
+            caption_url = f"{base}?lang={quote(lang_code)}&v={video_id}&fmt=vtt"
+            if name:
+                caption_url = f"{caption_url}&name={quote(name)}"
+            if kind:
+                caption_url = f"{caption_url}&kind={quote(kind)}"
+            response = requests.get(caption_url, headers=headers, timeout=10)
+            if not response.ok:
+                errors.append(RuntimeError(f"{caption_url} -> {response.status_code}"))
+                continue
+            transcript = parse_caption_payload(response.text)
+            if transcript:
+                return transcript
+            errors.append(RuntimeError(f"{caption_url} -> empty transcript"))
+        except Exception as exc:
+            errors.append(exc)
+
+    for base in bases:
         for lang in languages:
-            for track in tracks:
-                code = track.get("lang_code") or ""
-                if code.lower().startswith(lang.lower()):
-                    return track
-        return tracks[0]
+            for kind in ("", "asr"):
+                caption_url = f"{base}?lang={quote(lang)}&v={video_id}&fmt=vtt"
+                if kind:
+                    caption_url = f"{caption_url}&kind={quote(kind)}"
+                try:
+                    response = requests.get(caption_url, headers=headers, timeout=10)
+                    if not response.ok:
+                        errors.append(RuntimeError(f"{caption_url} -> {response.status_code}"))
+                        continue
+                    transcript = parse_caption_payload(response.text)
+                    if transcript:
+                        return transcript
+                    errors.append(RuntimeError(f"{caption_url} -> empty transcript"))
+                except Exception as exc:
+                    errors.append(exc)
 
-    track = pick_match()
-    lang_code = track.get("lang_code")
-    name = track.get("name")
-    if not lang_code:
-        raise RuntimeError(f"{list_url} -> missing lang_code")
-    caption_url = f"https://video.google.com/timedtext?lang={quote(lang_code)}&v={video_id}&fmt=vtt"
-    if name:
-        caption_url = f"{caption_url}&name={quote(name)}"
-    response = requests.get(caption_url, timeout=10)
-    if not response.ok:
-        raise RuntimeError(f"{caption_url} -> {response.status_code}")
-    transcript = parse_caption_text(response.text)
-    if transcript:
-        return transcript
-    raise RuntimeError(f"{caption_url} -> empty transcript")
+    raise RuntimeError(f"{bases[0]} -> failed (timedtext errors: {errors})")
 
 
 def fetch_youtube_transcript_piped(video_id, languages):
