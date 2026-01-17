@@ -81,6 +81,9 @@ def summarize_text(text, limit=500):
         return cleaned
     return cleaned[:limit] + "..."
 
+def is_debug_enabled():
+    return os.getenv("TRANSCRIPT_DEBUG", "").lower() in ("1", "true", "yes")
+
 
 def get_preferred_transcript_languages():
     env_langs = os.getenv("TRANSCRIPT_LANGS", "")
@@ -91,36 +94,44 @@ def get_preferred_transcript_languages():
 
 def fetch_youtube_transcript(video_id):
     languages = get_preferred_transcript_languages()
+    debug = is_debug_enabled()
+    last_error = None
 
     if hasattr(YouTubeTranscriptApi, "get_transcript"):
         try:
             return YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
-        except Exception:
-            pass
+        except Exception as exc:
+            last_error = exc
 
     try:
         if hasattr(YouTubeTranscriptApi, "list_transcripts"):
             transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
         else:
             transcripts = YouTubeTranscriptApi().list(video_id)
-    except Exception:
-        raise RuntimeError("未能获取字幕，请确认视频字幕可用。")
+    except Exception as exc:
+        message = "未能获取字幕，请确认视频字幕可用。"
+        if debug and exc:
+            message = f"{message} ({exc})"
+        raise RuntimeError(message)
 
     for finder_name in ("find_manually_created_transcript", "find_generated_transcript", "find_transcript"):
         try:
             finder = getattr(transcripts, finder_name)
             transcript = finder(languages)
             return transcript.fetch()
-        except Exception:
-            pass
+        except Exception as exc:
+            last_error = exc
 
     for transcript in transcripts:
         try:
             return transcript.fetch()
-        except Exception:
-            pass
+        except Exception as exc:
+            last_error = exc
 
-    raise RuntimeError("未能获取字幕，请确认视频字幕可用。")
+    message = "未能获取字幕，请确认视频字幕可用。"
+    if debug and last_error:
+        message = f"{message} ({last_error})"
+    raise RuntimeError(message)
 
 
 def transcript_to_text(transcript_data):
