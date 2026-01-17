@@ -159,42 +159,46 @@ def fetch_twitter_text(url, cookie_map=None):
     except Exception:
         pass
 
+    # 4. 最后兜底：Playwright（需浏览器内核，常常失败）
     try:
         from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
-    except Exception as exc:
-        raise RuntimeError(
-            "Playwright not installed. Run: pip install playwright && python -m playwright install chromium"
-        ) from exc
-
-    title = "Twitter/X 内容抓取 (Live)"
-    text = ""
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
+        
+        title = "Twitter/X 内容抓取 (Live)"
+        text = ""
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                )
             )
-        )
-        if cookie_map:
-            context.add_cookies(build_playwright_cookies(cookie_map))
-        page = context.new_page()
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=20000)
-            title = page.title() or title
-            page.wait_for_selector('[data-testid="tweetText"]', timeout=20000)
-            text = page.locator('[data-testid="tweetText"]').first.inner_text().strip()
-        except PlaywrightTimeoutError as exc:
-            raise RuntimeError("tweet-text-not-found") from exc
-        finally:
-            context.close()
-            browser.close()
+            if cookie_map:
+                context.add_cookies(build_playwright_cookies(cookie_map))
+            page = context.new_page()
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                title = page.title() or title
+                page.wait_for_selector('[data-testid="tweetText"]', timeout=20000)
+                text = page.locator('[data-testid="tweetText"]').first.inner_text().strip()
+                if text:
+                    return title, text, "playwright"
+            except:
+                pass
+            finally:
+                context.close()
+                browser.close()
+    except Exception:
+        pass
 
-    if not text:
-        raise RuntimeError("tweet-text-not-found")
+    # 最终降级：返回高质量模拟数据（告知用户真实抓取失败）
+    return (
+        f"推文 {tweet_id} (演示数据)",
+        "真实抓取暂时不可用。Twitter/X 已加强反爬限制，FixTweet/Syndication API 等第三方服务可能受影响。若需真实数据，建议：1) 使用官方 Twitter API（付费）；2) 本地配置 Cookie 认证；3) 等待第三方服务恢复。",
+        "mock_fallback"
+    )
 
-    return title, text, "playwright"
 
 @app.route('/api/parse', methods=['POST'])
 def parse_content():
@@ -267,12 +271,14 @@ def parse_content():
                 "syndication": "Syndication API（不稳定）",
                 "snscrape": "snscrape 抓取",
                 "playwright": "Playwright DOM 抓取（兜底）",
+                "mock_fallback": "演示数据（真实抓取失败）",
             }
             confidences = {
                 "fixtweet": "95%",
                 "syndication": "75%",
                 "snscrape": "80%",
                 "playwright": "60%",
+                "mock_fallback": "0% (Mock)",
             }
             method_label = method_labels.get(method, "未知方式")
             confidence = confidences.get(method, "70%")
