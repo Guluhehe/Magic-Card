@@ -1,5 +1,5 @@
-import os
 import re
+from urllib.parse import urlparse
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -13,14 +13,199 @@ def extract_youtube_id(url):
     match = re.search(pattern, url)
     return match.group(1) if match else None
 
+
+def extract_twitter_id(url):
+    try:
+        path = urlparse(url).path
+    except Exception:
+        return None
+    segments = [s for s in path.split("/") if s]
+    if len(segments) >= 4 and segments[0] == "i" and segments[1] == "web" and segments[2] == "status":
+        return segments[3]
+    if len(segments) >= 3 and segments[1] == "status":
+        return segments[2]
+    if len(segments) >= 2 and segments[0] == "status":
+        return segments[1]
+    return None
+
+
+def parse_cookie_header(cookie_header):
+    cookies = {}
+    if not cookie_header:
+        return cookies
+    parts = [p.strip() for p in cookie_header.split(";") if p.strip()]
+    for part in parts:
+        if "=" not in part:
+            continue
+        name, value = part.split("=", 1)
+        name = name.strip()
+        value = value.strip()
+        if name and value:
+            cookies[name] = value
+    return cookies
+
+
+def build_playwright_cookies(cookie_map):
+    cookies = []
+    if not cookie_map:
+        return cookies
+    for domain in [".x.com", ".twitter.com"]:
+        for name, value in cookie_map.items():
+            cookies.append(
+                {
+                    "name": name,
+                    "value": value,
+                    "domain": domain,
+                    "path": "/",
+                    "secure": True,
+                    "sameSite": "Lax",
+                }
+            )
+    return cookies
+
+
+def summarize_text(text, limit=500):
+    cleaned = text.strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[:limit] + "..."
+
+
+def fetch_twitter_via_fixtweet(tweet_id):
+    """
+    使用 FixTweet API 获取推文内容（免费、稳定、无需API Key）
+    https://github.com/FixTweet/FixTweet/wiki/API
+    """
+    url = f"https://api.fxtwitter.com/status/{tweet_id}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.ok:
+            data = response.json()
+            
+            # 检查响应格式
+            if data.get("code") == 200 and "tweet" in data:
+                tweet = data["tweet"]
+                text = tweet.get("text", "")
+                
+                if text:
+                    author = tweet.get("author", {})
+                    display_name = author.get("name", "User")
+                    screen_name = author.get("screen_name", "")
+                    title = f"{display_name} @{screen_name}".strip()
+                    return title, text, "fixtweet"
+    except Exception:
+        pass
+    
+    raise RuntimeError("fixtweet-failed")
+
+
+def fetch_twitter_text(url, cookie_map=None):
+    """
+    多级降级策略抓取推文：
+    1. FixTweet API（最优先，免费稳定）
+    2. Syndication API（不稳定，作为降级）
+    3. snscrape（需额外安装）
+    4. Playwright（最后兜底，需浏览器内核）
+    """
+    tweet_id = extract_twitter_id(url)
+    if not tweet_id:
+        raise RuntimeError("invalid-twitter-url")
+
+    # 1. 优先：FixTweet API（推荐方案）
+    try:
+        return fetch_twitter_via_fixtweet(tweet_id)
+    except Exception:
+        pass
+
+    # 2. 降级：Syndication API（2024年已不稳定）
+    syndication_url = (
+        f"https://cdn.syndication.twimg.com/tweet-result?id={tweet_id}&lang=zh"
+    )
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+    try:
+        response = requests.get(syndication_url, headers=headers, timeout=12)
+        if response.ok:
+            data = response.json()
+            text = data.get("text") or data.get("full_text") or data.get("raw_text")
+            if text:
+                user = data.get("user", {}) or {}
+                display_name = user.get("name") or "Twitter/X"
+                screen_name = user.get("screen_name") or ""
+                title = f"{display_name} @{screen_name}".strip()
+                return title, text, "syndication"
+    except Exception:
+        pass
+
+    # 3. 降级：snscrape（需额外安装 snscrape 库）
+    try:
+        import snscrape.modules.twitter as sntwitter
+        scraper = sntwitter.TwitterTweetScraper(tweet_id)
+        tweet = next(scraper.get_items(), None)
+        if tweet and getattr(tweet, "content", None):
+            display_name = getattr(tweet.user, "displayname", "Twitter/X")
+            screen_name = getattr(tweet.user, "username", "")
+            title = f"{display_name} @{screen_name}".strip()
+            return title, tweet.content, "snscrape"
+    except Exception:
+        pass
+
+    try:
+        from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+    except Exception as exc:
+        raise RuntimeError(
+            "Playwright not installed. Run: pip install playwright && python -m playwright install chromium"
+        ) from exc
+
+    title = "Twitter/X 内容抓取 (Live)"
+    text = ""
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        )
+        if cookie_map:
+            context.add_cookies(build_playwright_cookies(cookie_map))
+        page = context.new_page()
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            title = page.title() or title
+            page.wait_for_selector('[data-testid="tweetText"]', timeout=20000)
+            text = page.locator('[data-testid="tweetText"]').first.inner_text().strip()
+        except PlaywrightTimeoutError as exc:
+            raise RuntimeError("tweet-text-not-found") from exc
+        finally:
+            context.close()
+            browser.close()
+
+    if not text:
+        raise RuntimeError("tweet-text-not-found")
+
+    return title, text, "playwright"
+
 @app.route('/api/parse', methods=['POST'])
 def parse_content():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     url = data.get('url')
     platform = data.get('platform')
 
     if not url:
         return jsonify({"error": "URL is required"}), 400
+    if not platform:
+        return jsonify({"error": "Platform is required"}), 400
 
     try:
         if platform == 'YouTube':
@@ -28,18 +213,28 @@ def parse_content():
             if not video_id:
                 return jsonify({"error": "Invalid YouTube URL"}), 400
             
-            # Fetch transcript
-            from youtube_transcript_api import YouTubeTranscriptApi
-            # Let's try the most standard way again, maybe the first error was just a typo
+            # Fetch transcript (support multiple library API versions)
             try:
-                transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=['zh-CN', 'en'])
-            except:
-                # Direct class call if get_transcript is missing
-                transcripts = YouTubeTranscriptApi().list(video_id)
+                if hasattr(YouTubeTranscriptApi, 'get_transcript'):
+                    transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=['zh-CN', 'en'])
+                else:
+                    raise AttributeError("get_transcript not available")
+            except Exception:
+                if hasattr(YouTubeTranscriptApi, 'list_transcripts'):
+                    transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
+                else:
+                    transcripts = YouTubeTranscriptApi().list(video_id)
                 transcript = transcripts.find_transcript(['zh-Hans', 'zh-CN', 'en'])
                 transcript_data = transcript.fetch()
             
-            full_text = " ".join([item['text'] for item in transcript_data])
+            def extract_text(item):
+                if isinstance(item, dict):
+                    return item.get('text', '')
+                if hasattr(item, 'text'):
+                    return item.text
+                return ''
+
+            full_text = " ".join([extract_text(item) for item in transcript_data if extract_text(item)])
             
             # For this prototype, we return the transcript length and a few snippets
             # In a full version, this 'full_text' would be sent to Gemini/OpenAI
@@ -56,17 +251,40 @@ def parse_content():
             })
 
         elif platform == 'Twitter':
-            # Twitter scraping usually requires a heavier tool like Selenium/Playwright in the backend
-            # For this prototype, we simulate a successful scrape of public metadata
+            twitter_cookies = data.get("twitter_cookies") or {}
+            if isinstance(twitter_cookies, str):
+                twitter_cookies = parse_cookie_header(twitter_cookies)
+            if not isinstance(twitter_cookies, dict):
+                twitter_cookies = {}
+            if data.get("auth_token"):
+                twitter_cookies.setdefault("auth_token", data.get("auth_token"))
+            if data.get("ct0"):
+                twitter_cookies.setdefault("ct0", data.get("ct0"))
+
+            title, text, method = fetch_twitter_text(url, twitter_cookies)
+            method_labels = {
+                "fixtweet": "FixTweet API（推荐）",
+                "syndication": "Syndication API（不稳定）",
+                "snscrape": "snscrape 抓取",
+                "playwright": "Playwright DOM 抓取（兜底）",
+            }
+            confidences = {
+                "fixtweet": "95%",
+                "syndication": "75%",
+                "snscrape": "80%",
+                "playwright": "60%",
+            }
+            method_label = method_labels.get(method, "未知方式")
+            confidence = confidences.get(method, "70%")
             return jsonify({
-                "title": "Twitter (X) 内容抓取演示 (Real Prototype)",
-                "summary": "推文内容抓取在后端通过无头浏览器模拟完成。内容已被提取并准备好进行 AI 总结。",
-                "length": "约 280 字符",
-                "confidence": "95%",
+                "title": title,
+                "summary": summarize_text(text),
+                "length": f"{len(text)} 字符",
+                "confidence": confidence,
                 "highlights": [
-                    {"label": "抓取方式", "text": "通过 Puppeteer 模拟登录/访问拉取 DOM 平面文本。"},
-                    {"label": "内容识别", "text": "成功识别推文中的核心文字和关联图片 Alt 描述。"},
-                    {"label": "优势", "text": "完全绕过价格昂贵的 X 官方 API。"}
+                    {"label": "抓取方式", "text": method_label},
+                    {"label": "原文片段", "text": summarize_text(text, 120)},
+                    {"label": "提示", "text": "若提示登录或无文本，可传 auth_token/ct0 或完整 Cookie。"}
                 ]
             })
 

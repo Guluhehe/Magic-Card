@@ -186,8 +186,7 @@ const handleSubmit = async (event) => {
   status.textContent = "正在通过后端引擎提取内容 (Phase 2 Real Extract)...";
   status.style.color = "var(--primary)";
 
-  // Phase 2: Force API mode for demonstration if it's a YouTube link
-  const targetMode = data.platform === 'YouTube' ? 'api' : parseMode.value;
+  const targetMode = parseMode.value;
 
   if (targetMode === "api") {
     try {
