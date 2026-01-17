@@ -98,6 +98,9 @@ def get_piped_instances():
         return [item.strip().rstrip("/") for item in env_instances.split(",") if item.strip()]
     return [
         "https://piped.video",
+        "https://piped.mha.fi",
+        "https://piped.lunar.icu",
+        "https://vid.puffyan.us",
         "https://piped-api.kavin.rocks",
     ]
 
@@ -121,12 +124,14 @@ def parse_caption_text(raw_text):
 def fetch_youtube_transcript_piped(video_id, languages):
     instances = get_piped_instances()
     last_error = None
+    errors = []
     for base in instances:
         try:
             meta_url = f"{base}/api/v1/captions/{video_id}"
             response = requests.get(meta_url, timeout=10)
             if not response.ok:
                 last_error = RuntimeError(f"{meta_url} -> {response.status_code}")
+                errors.append(last_error)
                 continue
             payload = response.json()
             if isinstance(payload, dict) and "captions" in payload:
@@ -135,6 +140,7 @@ def fetch_youtube_transcript_piped(video_id, languages):
                 captions = payload if isinstance(payload, list) else []
             if not captions:
                 last_error = RuntimeError(f"{meta_url} -> empty captions")
+                errors.append(last_error)
                 continue
 
             def pick_match():
@@ -155,22 +161,63 @@ def fetch_youtube_transcript_piped(video_id, languages):
             caption_url = track.get("url") or ""
             if not caption_url:
                 last_error = RuntimeError(f"{meta_url} -> missing url")
+                errors.append(last_error)
                 continue
             if caption_url.startswith("/"):
                 caption_url = f"{base}{caption_url}"
             response = requests.get(caption_url, timeout=10)
             if not response.ok:
                 last_error = RuntimeError(f"{caption_url} -> {response.status_code}")
+                errors.append(last_error)
                 continue
             transcript = parse_caption_text(response.text)
             if transcript:
                 return transcript
             last_error = RuntimeError(f"{caption_url} -> empty transcript")
+            errors.append(last_error)
         except Exception as exc:
             last_error = exc
+            errors.append(exc)
     if last_error:
-        raise last_error
+        raise RuntimeError(f"{last_error} (piped errors: {errors})")
     raise RuntimeError("piped captions unavailable")
+
+
+def fetch_youtube_transcript_lemnos(video_id, languages):
+    meta_url = f"https://yt.lemnoslife.com/videos?part=captionTracks&id={video_id}"
+    response = requests.get(meta_url, timeout=10)
+    if not response.ok:
+        raise RuntimeError(f"{meta_url} -> {response.status_code}")
+    data = response.json()
+    items = data.get("items", [])
+    if not items:
+        raise RuntimeError(f"{meta_url} -> empty items")
+    tracks = items[0].get("captionTracks") or []
+    if not tracks:
+        raise RuntimeError(f"{meta_url} -> empty captionTracks")
+
+    def pick_match():
+        for lang in languages:
+            for track in tracks:
+                code = track.get("languageCode") or ""
+                if code.lower().startswith(lang.lower()):
+                    return track
+        return tracks[0]
+
+    track = pick_match()
+    caption_url = track.get("baseUrl") or ""
+    if not caption_url:
+        raise RuntimeError(f"{meta_url} -> missing baseUrl")
+    if "fmt=" not in caption_url:
+        sep = "&" if "?" in caption_url else "?"
+        caption_url = f"{caption_url}{sep}fmt=vtt"
+    response = requests.get(caption_url, timeout=10)
+    if not response.ok:
+        raise RuntimeError(f"{caption_url} -> {response.status_code}")
+    transcript = parse_caption_text(response.text)
+    if transcript:
+        return transcript
+    raise RuntimeError(f"{caption_url} -> empty transcript")
 
 
 def fetch_youtube_transcript(video_id):
@@ -178,6 +225,7 @@ def fetch_youtube_transcript(video_id):
     debug = is_debug_enabled()
     last_error = None
     piped_error = None
+    lemnos_error = None
 
     if hasattr(YouTubeTranscriptApi, "get_transcript"):
         try:
@@ -214,6 +262,11 @@ def fetch_youtube_transcript(video_id):
     except Exception as exc:
         piped_error = exc
 
+    try:
+        return fetch_youtube_transcript_lemnos(video_id, languages)
+    except Exception as exc:
+        lemnos_error = exc
+
     message = "未能获取字幕，请确认视频字幕可用。"
     if debug:
         details = []
@@ -221,6 +274,8 @@ def fetch_youtube_transcript(video_id):
             details.append(f"youtube_error={last_error}")
         if piped_error:
             details.append(f"piped_error={piped_error}")
+        if lemnos_error:
+            details.append(f"lemnos_error={lemnos_error}")
         if details:
             message = f"{message} ({'; '.join(details)})"
     raise RuntimeError(message)
