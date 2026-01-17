@@ -413,102 +413,60 @@ def fetch_youtube_transcript_lemnos(video_id, languages):
 
 def fetch_youtube_transcript(video_id):
     """
-    多级降级策略获取 YouTube 字幕
-    在 Vercel 环境中会跳过慢速方法以避免超时
+    获取 YouTube 字幕 - 完全不依赖 youtube-transcript-api
+    优先使用最快、最稳定的方法，适配 Vercel 环境
     """
     languages = get_preferred_transcript_languages()
     debug = is_debug_enabled()
+    errors = []
     
-    # Vercel 环境优化：只使用快速方法，避免 10 秒超时
+    # 方法 1: Player API（最快、最稳定）
+    try:
+        return fetch_youtube_transcript_player(video_id, languages)
+    except Exception as exc:
+        errors.append(f"Player API: {exc}")
+        if debug:
+            print(f"[DEBUG] Player API failed: {exc}")
+    
+    # 方法 2: Lemnos API（第三方，但快）
+    try:
+        return fetch_youtube_transcript_lemnos(video_id, languages)
+    except Exception as exc:
+        errors.append(f"Lemnos API: {exc}")
+        if debug:
+            print(f"[DEBUG] Lemnos API failed: {exc}")
+    
+    # Vercel 环境：只尝试快速方法
     is_vercel = os.getenv("VERCEL") == "1"
     skip_slow = os.getenv("SKIP_SLOW_METHODS", "").lower() in ("1", "true", "yes")
     
     if is_vercel or skip_slow:
-        # 方法 1: 官方库（最快，优先）
-        if hasattr(YouTubeTranscriptApi, "get_transcript"):
-            try:
-                return YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
-            except Exception:
-                pass
-        
-        # 方法 2: Player API（备选）
-        try:
-            return fetch_youtube_transcript_player(video_id, languages)
-        except Exception:
-            pass
-        
-        # 方法 3: Lemnos（快速第三方 API）
-        try:
-            return fetch_youtube_transcript_lemnos(video_id, languages)
-        except Exception:
-            pass
-        
-        # Vercel 环境下只尝试快速方法，失败则放弃
-        raise RuntimeError("字幕获取失败（Vercel 快速模式），请确认视频有字幕")
+        # 在 Vercel 上放弃，避免超时
+        message = "字幕获取失败（快速模式），请确认视频有字幕"
+        if debug:
+            message = f"{message}。尝试的方法: {'; '.join(errors)}"
+        raise RuntimeError(message)
     
-    # 本地环境：使用完整的降级策略
-    last_error = None
-    
-    # 尝试 1: 官方库
-    if hasattr(YouTubeTranscriptApi, "get_transcript"):
-        try:
-            return YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
-        except Exception as exc:
-            last_error = exc
-    
-    # 尝试 2: list_transcripts
-    transcripts = None
-    try:
-        if hasattr(YouTubeTranscriptApi, "list_transcripts"):
-            transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
-        else:
-            transcripts = YouTubeTranscriptApi().list(video_id)
-    except Exception as exc:
-        last_error = exc
-    
-    if transcripts:
-        for finder_name in ("find_manually_created_transcript", "find_generated_transcript", "find_transcript"):
-            try:
-                finder = getattr(transcripts, finder_name)
-                transcript = finder(languages)
-                return transcript.fetch()
-            except Exception as exc:
-                last_error = exc
-        
-        for transcript in transcripts:
-            try:
-                return transcript.fetch()
-            except Exception as exc:
-                last_error = exc
-    
-    # 尝试 3: Player API
-    try:
-        return fetch_youtube_transcript_player(video_id, languages)
-    except Exception as exc:
-        last_error = exc
-    
-    # 尝试 4: TimedText API
+    # 方法 3: TimedText API（本地环境可以retry）
     try:
         return fetch_youtube_transcript_timedtext(video_id, languages)
     except Exception as exc:
-        last_error = exc
+        errors.append(f"TimedText API: {exc}")
+        if debug:
+            print(f"[DEBUG] TimedText API failed: {exc}")
     
-    # 尝试 5: Piped（慢）
+    # 方法 4: Piped（最慢，本地环境最后尝试）
     try:
         return fetch_youtube_transcript_piped(video_id, languages)
     except Exception as exc:
-        last_error = exc
-    
-    # 尝试 6: Lemnos
-    try:
-        return fetch_youtube_transcript_lemnos(video_id, languages)
-    except Exception as exc:
-        last_error = exc
+        errors.append(f"Piped API: {exc}")
+        if debug:
+            print(f"[DEBUG] Piped API failed: {exc}")
     
     # 所有方法失败
-    message = "未能获取字幕，请确认视频字幕可用。"
-    if debug and last_error:
-        message = f"{message} (last_error: {last_error})"
+    message = "未能获取字幕，请确认视频有字幕"
+    if debug:
+        message = f"{message}。尝试的方法: {'; '.join(errors)}"
     raise RuntimeError(message)
 
 

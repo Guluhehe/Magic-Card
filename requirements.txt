@@ -1,6 +1,7 @@
 flask==3.0.0
 flask-cors==4.0.0
-youtube-transcript-api==0.6.2
+# youtube-transcript-api is optional - we have custom fallback methods
+# youtube-transcript-api==0.6.2
 openai==1.47.0
 requests==2.31.0
 python-dotenv==1.0.0
