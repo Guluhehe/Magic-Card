@@ -158,6 +158,84 @@ def get_youtube_headers():
     }
 
 
+def extract_json_object(text, marker):
+    idx = text.find(marker)
+    if idx == -1:
+        return None
+    start = text.find("{", idx)
+    if start == -1:
+        return None
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == "\"":
+                in_str = False
+        else:
+            if ch == "\"":
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+    return None
+
+
+def fetch_youtube_transcript_player(video_id, languages):
+    headers = get_youtube_headers()
+    cookies = {"CONSENT": "YES+cb.20210328-17-p0.en+FX+111"}
+    watch_url = f"https://www.youtube.com/watch?v={video_id}"
+    response = requests.get(watch_url, headers=headers, cookies=cookies, timeout=10)
+    if not response.ok:
+        raise RuntimeError(f"{watch_url} -> {response.status_code}")
+    payload = extract_json_object(response.text, "ytInitialPlayerResponse")
+    if not payload:
+        raise RuntimeError(f"{watch_url} -> ytInitialPlayerResponse not found")
+    try:
+        data = json.loads(payload)
+    except Exception as exc:
+        raise RuntimeError(f"{watch_url} -> player json parse failed: {exc}")
+
+    captions = (
+        data.get("captions", {})
+        .get("playerCaptionsTracklistRenderer", {})
+        .get("captionTracks", [])
+    )
+    if not captions:
+        raise RuntimeError(f"{watch_url} -> empty captionTracks")
+
+    def pick_match():
+        for lang in languages:
+            for track in captions:
+                code = track.get("languageCode") or ""
+                if code.lower().startswith(lang.lower()):
+                    return track
+        return captions[0]
+
+    track = pick_match()
+    caption_url = track.get("baseUrl") or track.get("url")
+    if not caption_url:
+        raise RuntimeError(f"{watch_url} -> missing baseUrl")
+    if "fmt=" not in caption_url:
+        sep = "&" if "?" in caption_url else "?"
+        caption_url = f"{caption_url}{sep}fmt=vtt"
+    response = requests.get(caption_url, headers=headers, timeout=10)
+    if not response.ok:
+        raise RuntimeError(f"{caption_url} -> {response.status_code}")
+    transcript = parse_caption_payload(response.text)
+    if transcript:
+        return transcript
+    raise RuntimeError(f"{caption_url} -> empty transcript")
+
+
 def fetch_youtube_transcript_timedtext(video_id, languages):
     headers = get_youtube_headers()
     bases = [
@@ -337,6 +415,7 @@ def fetch_youtube_transcript(video_id):
     languages = get_preferred_transcript_languages()
     debug = is_debug_enabled()
     last_error = None
+    player_error = None
     timedtext_error = None
     piped_error = None
     lemnos_error = None
@@ -372,6 +451,11 @@ def fetch_youtube_transcript(video_id):
                 last_error = exc
 
     try:
+        return fetch_youtube_transcript_player(video_id, languages)
+    except Exception as exc:
+        player_error = exc
+
+    try:
         return fetch_youtube_transcript_timedtext(video_id, languages)
     except Exception as exc:
         timedtext_error = exc
@@ -391,6 +475,8 @@ def fetch_youtube_transcript(video_id):
         details = []
         if last_error:
             details.append(f"youtube_error={last_error}")
+        if player_error:
+            details.append(f"player_error={player_error}")
         if timedtext_error:
             details.append(f"timedtext_error={timedtext_error}")
         if piped_error:
