@@ -443,3 +443,93 @@ button.ghost:hover {
     gap: 10px;
   }
 }
+/* New Helpers */
+.hidden {
+  display: none !important;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+.visible {
+  display: block !important;
+  opacity: 1;
+}
+
+/* Advanced Settings Toggle */
+details.advanced-settings {
+  margin-top: 24px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+details.advanced-settings summary {
+  cursor: pointer;
+  font-weight: 600;
+  user-select: none;
+  outline: none;
+}
+
+details.advanced-settings[open] .config-grid {
+  margin-top: 16px;
+  animation: fadeIn 0.3s ease;
+}
+
+.hidden-field {
+  display: none; /* Hide API Key/Model for now */
+}
+
+/* Inline Style Controls in Output */
+.style-panel-inline {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 24px;
+  padding: 12px 16px;
+  background: #f1f5f9;
+  border-radius: 12px;
+  align-items: center;
+}
+
+.field-mini {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-mini label {
+  font-size: 12px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.field-mini input[type="color"] {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.field-mini select {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  background: white;
+}
+
+.actions-label {
+    font-size: 13px;
+    color: var(--muted);
+    font-weight: 500;
+}
+
+@media (max-width: 600px) {
+  .style-panel-inline {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
