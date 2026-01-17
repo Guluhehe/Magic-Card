@@ -254,27 +254,15 @@ python3 -m http.server 3000
 
 ### 云端部署（推荐）
 
-#### 前端：Vercel / Netlify
+#### 方案一：Vercel 同域（推荐）
 
-```bash
-# 部署前端静态文件
-vercel deploy
-```
+前端页面与 `/api/parse` 同域部署，API 由 `api/parse.py` 提供。
+环境变量配置方式见 [SECURITY.md](SECURITY.md) 与 `.env.example`。
 
-**环境变量（Vercel）**：无需配置（前端调用同域后端）
+#### 方案二：前后端分离
 
-#### 后端：Railway / Render
-
-1. 在平台上创建新项目
-2. 链接 GitHub 仓库
-3. 设置环境变量：
-   ```
-   OPENAI_API_KEY=sk-...
-   OPENAI_MODEL=gpt-4o-mini
-   ```
-4. 部署 `server.py`
-
-**注意**：如果前后端分离部署，需修改 `script.js` 中的 `getApiBase()` 返回后端 URL。
+前端部署到 Vercel，后端部署到 Render/Fly/Railway 等平台。
+此时需要修改 `script.js` 中的 `getApiBase()` 指向后端域名。
 
 ## 🤝 贡献指南
 

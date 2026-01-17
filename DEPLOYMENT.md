@@ -6,11 +6,7 @@
 
 ## ✅ 推荐方式：Vercel 同域 API
 
-前端会请求同域 `/api/parse`。因此线上需要有一个可用的 API 路由。
-
-> 说明：当前仓库后端是 Flask（`server.py`），Vercel 不支持常驻 Flask 服务。
-> 若要在 Vercel 同域提供 API，需要改成 Serverless Function（如 `api/parse.py`）。
-> 需要我帮你把 Flask 迁移为 Vercel API，请直接说。
+前端会请求同域 `/api/parse`，该路由由 `api/parse.py` 提供（Vercel Serverless Function）。
 
 ### 设置环境变量
 在 Vercel Dashboard → Project → Settings → Environment Variables 中配置服务端环境变量。
@@ -24,6 +20,12 @@
 - `SUMMARY_INPUT_CHARS`
 
 配置后重新部署一次。
+
+### 部署步骤（Vercel）
+1. Vercel Dashboard → New Project → 导入 GitHub 仓库
+2. Framework 选择 `Other`
+3. Build Command / Output Directory 留空
+4. 添加环境变量后点击 Deploy
 
 ---
 
