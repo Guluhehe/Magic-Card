@@ -163,9 +163,8 @@ def build_youtube_summary(text):
 
 
 def build_twitter_summary(text):
-    summary = summarize_text(text, limit=500)
-    highlights = [{"label": "原文", "text": summarize_text(text, limit=120)}]
-    return {"summary": summary, "highlights": highlights}
+    summary = text.strip()
+    return {"summary": summary, "highlights": []}
 
 
 def fetch_twitter_via_fixtweet(tweet_id):
@@ -369,14 +368,12 @@ def parse_content():
             }
             method_label = method_labels.get(method, "未知方式")
             confidence = confidences.get(method, "70%")
-            highlights = list(summary_data.get("highlights", []))
-            highlights.append({"label": "抓取方式", "text": method_label})
             return jsonify({
                 "title": title,
                 "summary": summary_data.get("summary", ""),
                 "length": f"{len(text)} 字符",
                 "confidence": confidence,
-                "highlights": highlights
+                "highlights": summary_data.get("highlights", [])
             })
 
         return jsonify({"error": "Unsupported platform"}), 400

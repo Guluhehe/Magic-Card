@@ -24,7 +24,13 @@ const sampleUrls = {
 
 const buildHighlights = (items) => {
   cardHighlights.innerHTML = "";
-  items.forEach((item) => {
+  const safeItems = Array.isArray(items) ? items : [];
+  if (!safeItems.length) {
+    cardHighlights.dataset.empty = "true";
+    return;
+  }
+  cardHighlights.dataset.empty = "false";
+  safeItems.forEach((item) => {
     const wrapper = document.createElement("div");
     wrapper.className = "highlight";
     const label = document.createElement("span");
@@ -126,7 +132,8 @@ const applyCardStyles = () => {
 
   contentCard.style.setProperty("--accent", chosenAccent);
   contentCard.classList.toggle("compact", densityValue === "compact");
-  cardHighlights.classList.toggle("hidden", highlightMode === "hide");
+  const isEmpty = cardHighlights.dataset.empty === "true";
+  cardHighlights.classList.toggle("hidden", highlightMode === "hide" || isEmpty);
 };
 
 const downloadCard = async () => {
@@ -144,7 +151,12 @@ const downloadCard = async () => {
   downloadButton.disabled = true;
   contentCard.classList.add("is-capturing");
   try {
-    const canvas = await html2canvas(contentCard, { backgroundColor: null, scale: 2 });
+    const scale = Math.min(4, Math.max(2, window.devicePixelRatio * 2));
+    const canvas = await html2canvas(contentCard, {
+      backgroundColor: null,
+      scale,
+      useCORS: true,
+    });
     const link = document.createElement("a");
     link.href = canvas.toDataURL("image/png");
     link.download = "magiccard.png";
@@ -179,6 +191,7 @@ const handleSubmit = async (event) => {
       id: data.id,
     });
     updateCard(data, result);
+    applyCardStyles();
     status.textContent = "✨ 抓取成功！卡片已生成。";
     outputPanel.classList.remove("hidden");
     outputPanel.classList.add("visible");
