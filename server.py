@@ -92,6 +92,87 @@ def get_preferred_transcript_languages():
     return ["zh-Hans", "zh-CN", "zh", "zh-TW", "en", "en-US", "en-GB"]
 
 
+def get_piped_instances():
+    env_instances = os.getenv("PIPED_INSTANCES", "")
+    if env_instances.strip():
+        return [item.strip().rstrip("/") for item in env_instances.split(",") if item.strip()]
+    return [
+        "https://piped.video",
+        "https://piped-api.kavin.rocks",
+    ]
+
+
+def parse_caption_text(raw_text):
+    lines = []
+    for line in raw_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("WEBVTT"):
+            continue
+        if "-->" in line:
+            continue
+        if re.match(r"^\d+$", line):
+            continue
+        lines.append(line)
+    return [{"text": line} for line in lines]
+
+
+def fetch_youtube_transcript_piped(video_id, languages):
+    instances = get_piped_instances()
+    last_error = None
+    for base in instances:
+        try:
+            meta_url = f"{base}/api/v1/captions/{video_id}"
+            response = requests.get(meta_url, timeout=10)
+            if not response.ok:
+                last_error = RuntimeError(f"{meta_url} -> {response.status_code}")
+                continue
+            payload = response.json()
+            if isinstance(payload, dict) and "captions" in payload:
+                captions = payload.get("captions", [])
+            else:
+                captions = payload if isinstance(payload, list) else []
+            if not captions:
+                last_error = RuntimeError(f"{meta_url} -> empty captions")
+                continue
+
+            def pick_match():
+                for lang in languages:
+                    for track in captions:
+                        code = (
+                            track.get("languageCode")
+                            or track.get("language")
+                            or track.get("code")
+                            or ""
+                        )
+                        label = (track.get("label") or "").lower()
+                        if code.lower() == lang.lower() or label.startswith(lang.lower()):
+                            return track
+                return captions[0]
+
+            track = pick_match()
+            caption_url = track.get("url") or ""
+            if not caption_url:
+                last_error = RuntimeError(f"{meta_url} -> missing url")
+                continue
+            if caption_url.startswith("/"):
+                caption_url = f"{base}{caption_url}"
+            response = requests.get(caption_url, timeout=10)
+            if not response.ok:
+                last_error = RuntimeError(f"{caption_url} -> {response.status_code}")
+                continue
+            transcript = parse_caption_text(response.text)
+            if transcript:
+                return transcript
+            last_error = RuntimeError(f"{caption_url} -> empty transcript")
+        except Exception as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    raise RuntimeError("piped captions unavailable")
+
+
 def fetch_youtube_transcript(video_id):
     languages = get_preferred_transcript_languages()
     debug = is_debug_enabled()
@@ -127,6 +208,11 @@ def fetch_youtube_transcript(video_id):
             return transcript.fetch()
         except Exception as exc:
             last_error = exc
+
+    try:
+        return fetch_youtube_transcript_piped(video_id, languages)
+    except Exception as exc:
+        last_error = exc
 
     message = "未能获取字幕，请确认视频字幕可用。"
     if debug and last_error:
