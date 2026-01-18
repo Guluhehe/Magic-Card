@@ -110,7 +110,13 @@ class handler(BaseHTTPRequestHandler):
         
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=api_key)
+            
+            # Support custom base_url (e.g., openkey.cloud)
+            base_url = os.getenv("OPENAI_BASE_URL", "https://openkey.cloud/v1")
+            client = OpenAI(
+                api_key=api_key,
+                base_url=base_url
+            )
             
             # Use GPT-4o-mini for cost efficiency
             model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
