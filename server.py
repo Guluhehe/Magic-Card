@@ -3,6 +3,7 @@ import json
 import os
 import re
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from urllib.parse import quote, urlparse
 from flask import Flask, request, jsonify
@@ -21,6 +22,32 @@ except ImportError:
 
 app = Flask(__name__)
 CORS(app)
+
+_CACHE = {}
+_CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
+_CACHE_MAX_ITEMS = int(os.getenv("CACHE_MAX_ITEMS", "256"))
+
+
+def cache_get(key):
+    if _CACHE_TTL <= 0:
+        return None
+    item = _CACHE.get(key)
+    if not item:
+        return None
+    value, ts = item
+    if time.time() - ts > _CACHE_TTL:
+        _CACHE.pop(key, None)
+        return None
+    return value
+
+
+def cache_set(key, value):
+    if _CACHE_TTL <= 0:
+        return
+    if _CACHE_MAX_ITEMS > 0 and len(_CACHE) >= _CACHE_MAX_ITEMS:
+        oldest_key = min(_CACHE.items(), key=lambda item: item[1][1])[0]
+        _CACHE.pop(oldest_key, None)
+    _CACHE[key] = (value, time.time())
 
 def extract_youtube_id(url):
     pattern = r'(?:v=|\/)([0-9A-Za-z_-]{11}).*'
@@ -562,6 +589,84 @@ def extract_json_block(text):
     return text[start : end + 1]
 
 
+def fetch_youtube_metadata(video_id, url):
+    headers = get_youtube_headers()
+    cookies = {"CONSENT": "YES+cb.20210328-17-p0.en+FX+111"}
+    title = ""
+    description = ""
+    author = ""
+    errors = []
+
+    oembed_url = f"https://www.youtube.com/oembed?url={quote(url)}&format=json"
+    try:
+        response = requests.get(oembed_url, headers=headers, timeout=10)
+        if response.ok:
+            data = response.json()
+            title = data.get("title", "") or title
+            author = data.get("author_name", "") or author
+        else:
+            errors.append(RuntimeError(f"{oembed_url} -> {response.status_code}"))
+    except Exception as exc:
+        errors.append(exc)
+
+    if not title or not description:
+        watch_url = f"https://www.youtube.com/watch?v={video_id}"
+        try:
+            response = requests.get(watch_url, headers=headers, cookies=cookies, timeout=10)
+            if response.ok:
+                payload = extract_json_object(response.text, "ytInitialPlayerResponse")
+                if payload:
+                    data = json.loads(payload)
+                    details = data.get("videoDetails", {})
+                    title = details.get("title", "") or title
+                    description = details.get("shortDescription", "") or description
+                    author = details.get("author", "") or author
+            else:
+                errors.append(RuntimeError(f"{watch_url} -> {response.status_code}"))
+        except Exception as exc:
+            errors.append(exc)
+
+    if not title and not description:
+        raise RuntimeError(f"metadata unavailable: {errors}")
+
+    return {
+        "title": title.strip(),
+        "description": description.strip(),
+        "author": author.strip(),
+    }
+
+
+def build_metadata_text(metadata):
+    parts = []
+    title = metadata.get("title")
+    description = metadata.get("description")
+    author = metadata.get("author")
+    if title:
+        parts.append(f"标题：{title}")
+    if description:
+        parts.append(f"描述：{description}")
+    if author:
+        parts.append(f"作者：{author}")
+    return "\n".join(parts).strip()
+
+
+def classify_youtube_error(*errors):
+    text = " ".join([str(err) for err in errors if err]).lower()
+    if not text:
+        return "UNKNOWN"
+    if "not a bot" in text or "sign in" in text or "429" in text:
+        return "BOT_BLOCKED"
+    if "caption" in text or "subtitle" in text or "transcript" in text or "字幕" in text:
+        return "NO_CAPTION"
+    if "yt-dlp" in text or "download" in text or "audio" in text:
+        return "YTDLP_FAILED"
+    if "whisper" in text or "openai" in text:
+        return "ASR_FAILED"
+    if "timeout" in text or "connection" in text:
+        return "NETWORK"
+    return "UNKNOWN"
+
+
 def summarize_with_gemini(text, platform):
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -620,11 +725,19 @@ def summarize_with_gemini(text, platform):
     return {"summary": summary, "highlights": highlights[:3]}
 
 
+def build_summary_with_fallback(text, platform):
+    llm_summary = summarize_with_gemini(text, platform) or summarize_with_openai(text, platform)
+    if llm_summary:
+        return llm_summary, True
+    cleaned = text.strip()
+    if len(cleaned) > 400:
+        cleaned = cleaned[:400].rstrip() + "..."
+    return {"summary": cleaned, "highlights": []}, False
+
+
 def build_youtube_summary(text):
-    llm_summary = summarize_with_gemini(text, "YouTube") or summarize_with_openai(text, "YouTube")
-    if not llm_summary:
-        raise RuntimeError("AI 总结失败，请检查 Key 或额度。")
-    return llm_summary
+    summary, _ = build_summary_with_fallback(text, "YouTube")
+    return summary
 
 
 def build_twitter_summary(text):
@@ -832,6 +945,11 @@ def parse_content():
     if not platform:
         return jsonify({"error": "Platform is required"}), 400
 
+    cache_key = f"{platform}:{url}"
+    cached = cache_get(cache_key)
+    if cached:
+        return jsonify(cached)
+
     try:
         if platform == 'YouTube':
             video_id = extract_youtube_id(url)
@@ -840,41 +958,75 @@ def parse_content():
 
             transcript_error = None
             audio_error = None
+            metadata_error = None
             full_text = ""
+            source = None
+            metadata = None
 
             try:
                 transcript_data = fetch_youtube_transcript(video_id)
                 full_text = transcript_to_text(transcript_data)
+                if full_text:
+                    source = "transcript"
             except Exception as exc:
                 transcript_error = exc
 
             if not full_text and is_audio_transcription_enabled():
                 try:
                     full_text = transcribe_youtube_audio(url)
+                    if full_text:
+                        source = "audio"
                 except Exception as exc:
                     audio_error = exc
 
             if not full_text:
-                message = "未能获取字幕，请确认视频有字幕。"
+                try:
+                    metadata = fetch_youtube_metadata(video_id, url)
+                    full_text = build_metadata_text(metadata)
+                    if full_text:
+                        source = "metadata"
+                except Exception as exc:
+                    metadata_error = exc
+
+            if not full_text:
+                category = classify_youtube_error(transcript_error, audio_error, metadata_error)
+                message = f"未能获取视频内容（{category}）。"
                 if is_debug_enabled():
                     details = []
                     if transcript_error:
                         details.append(f"transcript_error={transcript_error}")
                     if audio_error:
                         details.append(f"audio_error={audio_error}")
+                    if metadata_error:
+                        details.append(f"metadata_error={metadata_error}")
                     if details:
                         message = f"{message} ({'; '.join(details)})"
                 raise RuntimeError(message)
-            summary_data = build_youtube_summary(full_text)
+
+            summary_data, used_llm = build_summary_with_fallback(full_text, "YouTube")
+            title = metadata.get("title") if metadata else ""
+            title = title or "YouTube 视频内容实时解析 (Real Prototype)"
+            if source == "transcript":
+                confidence = "100% (Transcript + AI)" if used_llm else "85% (Transcript)"
+            elif source == "audio":
+                confidence = "90% (Audio + AI)" if used_llm else "70% (Audio)"
+            else:
+                confidence = "70% (Metadata + AI)" if used_llm else "50% (Metadata)"
+            if source == "metadata":
+                length = f"{len(full_text)} 字符"
+            else:
+                length = f"{max(1, len(full_text) // 1000)}k 字符"
 
             # For this prototype, we return the transcript length and summary
-            return jsonify({
-                "title": "YouTube 视频内容实时解析 (Real Prototype)",
+            response_payload = {
+                "title": title,
                 "summary": summary_data.get("summary", ""),
-                "length": f"{len(full_text) // 1000}k 字符",
-                "confidence": "100% (Direct Extraction)",
+                "length": length,
+                "confidence": confidence,
                 "highlights": summary_data.get("highlights", [])
-            })
+            }
+            cache_set(cache_key, response_payload)
+            return jsonify(response_payload)
 
         elif platform == 'Twitter':
             twitter_cookies = data.get("twitter_cookies") or {}
@@ -903,13 +1055,15 @@ def parse_content():
             }
             method_label = method_labels.get(method, "未知方式")
             confidence = confidences.get(method, "70%")
-            return jsonify({
+            response_payload = {
                 "title": title,
                 "summary": summary_data.get("summary", ""),
                 "length": f"{len(text)} 字符",
                 "confidence": confidence,
                 "highlights": summary_data.get("highlights", [])
-            })
+            }
+            cache_set(cache_key, response_payload)
+            return jsonify(response_payload)
 
         return jsonify({"error": "Unsupported platform"}), 400
 
