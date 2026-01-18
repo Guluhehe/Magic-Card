@@ -5,6 +5,7 @@ openai==1.47.0
 requests==2.31.0
 python-dotenv==1.0.0
 gunicorn==21.2.0
+google-generativeai  # Gemini API for YouTube video understanding
 
 # Optional dependencies for Twitter scraping
 # playwright==1.40.0
