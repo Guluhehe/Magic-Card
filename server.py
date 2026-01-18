@@ -2,6 +2,7 @@ import html
 import json
 import os
 import re
+import tempfile
 import xml.etree.ElementTree as ET
 from urllib.parse import quote, urlparse
 from flask import Flask, request, jsonify
@@ -552,10 +553,74 @@ def summarize_with_openai(text, platform):
     return {"summary": summary, "highlights": highlights[:3]}
 
 
+def extract_json_block(text):
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    return text[start : end + 1]
+
+
+def summarize_with_gemini(text, platform):
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return None
+
+    try:
+        import google.generativeai as genai
+    except Exception:
+        return None
+
+    genai.configure(api_key=api_key)
+    model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    model = genai.GenerativeModel(model_name)
+    max_chars = int(os.getenv("SUMMARY_INPUT_CHARS", "12000"))
+    snippet = text[:max_chars]
+
+    prompt = (
+        "你是内容总结助手，请用中文输出精简摘要，并给出 3 条要点。"
+        "返回 JSON 格式：{\"summary\":\"...\",\"highlights\":[{\"label\":\"...\",\"text\":\"...\"}]}"
+        "label 要简短。保留原文专有名词。"
+        f"\n平台：{platform}\n内容：{snippet}"
+    )
+
+    try:
+        response = model.generate_content(prompt)
+        content = response.text or ""
+    except Exception:
+        return None
+
+    json_text = extract_json_block(content)
+    if not json_text:
+        return None
+
+    try:
+        data = json.loads(json_text)
+    except Exception:
+        return None
+
+    summary = str(data.get("summary", "")).strip()
+    raw_highlights = data.get("highlights", [])
+    if not summary or not isinstance(raw_highlights, list):
+        return None
+
+    highlights = []
+    for item in raw_highlights:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label", "")).strip()
+        text_item = str(item.get("text", "")).strip()
+        if label and text_item:
+            highlights.append({"label": label, "text": text_item})
+
+    if not highlights:
+        return None
+
+    return {"summary": summary, "highlights": highlights[:3]}
+
+
 def build_youtube_summary(text):
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("未配置 OPENAI_API_KEY，YouTube 总结需要 AI Key。")
-    llm_summary = summarize_with_openai(text, "YouTube")
+    llm_summary = summarize_with_gemini(text, "YouTube") or summarize_with_openai(text, "YouTube")
     if not llm_summary:
         raise RuntimeError("AI 总结失败，请检查 Key 或额度。")
     return llm_summary
@@ -564,6 +629,69 @@ def build_youtube_summary(text):
 def build_twitter_summary(text):
     summary = text.strip()
     return {"summary": summary, "highlights": []}
+
+
+def is_audio_transcription_enabled():
+    return os.getenv("ENABLE_AUDIO_TRANSCRIPT", "").lower() in ("1", "true", "yes")
+
+
+def transcribe_audio_with_openai(file_path):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("未配置 OPENAI_API_KEY，无法进行音频转写。")
+    try:
+        from openai import OpenAI
+    except Exception:
+        raise RuntimeError("OpenAI SDK 未安装，无法进行音频转写。")
+    client = OpenAI(api_key=api_key)
+    model = os.getenv("WHISPER_MODEL", "whisper-1")
+    with open(file_path, "rb") as audio_file:
+        result = client.audio.transcriptions.create(
+            model=model,
+            file=audio_file,
+            response_format="text",
+        )
+    if isinstance(result, str):
+        return result
+    return getattr(result, "text", "") or ""
+
+
+def transcribe_youtube_audio(video_url):
+    try:
+        from yt_dlp import YoutubeDL
+    except Exception:
+        raise RuntimeError("yt-dlp 未安装，无法下载视频音频。")
+
+    max_mb = os.getenv("YOUTUBE_AUDIO_MAX_MB")
+    max_bytes = None
+    if max_mb and max_mb.isdigit():
+        max_bytes = int(max_mb) * 1024 * 1024
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        output_template = os.path.join(tmp_dir, "%(id)s.%(ext)s")
+        ydl_opts = {
+            "format": "bestaudio[ext=m4a]/bestaudio",
+            "outtmpl": output_template,
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": True,
+            "socket_timeout": 10,
+        }
+        if max_bytes:
+            ydl_opts["max_filesize"] = max_bytes
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=True)
+            file_path = ydl.prepare_filename(info)
+            if not os.path.exists(file_path):
+                file_path = os.path.join(
+                    tmp_dir, f"{info.get('id', 'audio')}.{info.get('ext', 'm4a')}"
+                )
+        if not os.path.exists(file_path):
+            raise RuntimeError("下载音频失败，未找到输出文件。")
+        transcript = transcribe_audio_with_openai(file_path)
+        if not transcript.strip():
+            raise RuntimeError("音频转写结果为空。")
+        return transcript
 
 
 def fetch_twitter_via_fixtweet(tweet_id):
@@ -706,11 +834,34 @@ def parse_content():
             video_id = extract_youtube_id(url)
             if not video_id:
                 return jsonify({"error": "Invalid YouTube URL"}), 400
-            
-            transcript_data = fetch_youtube_transcript(video_id)
-            full_text = transcript_to_text(transcript_data)
+
+            transcript_error = None
+            audio_error = None
+            full_text = ""
+
+            try:
+                transcript_data = fetch_youtube_transcript(video_id)
+                full_text = transcript_to_text(transcript_data)
+            except Exception as exc:
+                transcript_error = exc
+
+            if not full_text and is_audio_transcription_enabled():
+                try:
+                    full_text = transcribe_youtube_audio(url)
+                except Exception as exc:
+                    audio_error = exc
+
             if not full_text:
-                raise RuntimeError("未能获取字幕，请确认视频字幕可用。")
+                message = "未能获取字幕，请确认视频有字幕。"
+                if is_debug_enabled():
+                    details = []
+                    if transcript_error:
+                        details.append(f"transcript_error={transcript_error}")
+                    if audio_error:
+                        details.append(f"audio_error={audio_error}")
+                    if details:
+                        message = f"{message} ({'; '.join(details)})"
+                raise RuntimeError(message)
             summary_data = build_youtube_summary(full_text)
 
             # For this prototype, we return the transcript length and summary

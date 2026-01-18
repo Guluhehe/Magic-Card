@@ -40,8 +40,13 @@ Vercel 只部署静态前端，后端 API 部署在 Railway，稳定性更高。
 - `OPENAI_API_KEY`
 
 可选：
+- `GEMINI_API_KEY`
+- `GEMINI_MODEL`
 - `OPENAI_MODEL`
 - `SUMMARY_INPUT_CHARS`
+- `ENABLE_AUDIO_TRANSCRIPT=1`（启用音频转写兜底）
+- `WHISPER_MODEL`（默认 `whisper-1`）
+- `YOUTUBE_AUDIO_MAX_MB`（限制下载体积，比如 `50`）
 
 配置后重新部署一次。
 
