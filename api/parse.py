@@ -13,7 +13,7 @@ import re
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # Force Vercel to rebuild - Version 2.0.0
-API_VERSION = "2.0.0-gemini-pro"
+API_VERSION = "2.0.0-gemini-2.0-flash"
 
 
 class handler(BaseHTTPRequestHandler):
@@ -28,7 +28,7 @@ class handler(BaseHTTPRequestHandler):
             "version": API_VERSION,
             "platform": "Vercel Serverless",
             "gemini_enabled": bool(os.getenv("GEMINI_API_KEY")),
-            "default_model": os.getenv("GEMINI_MODEL", "gemini-pro")
+            "default_model": os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
         }
         
         self.wfile.write(json.dumps(info, ensure_ascii=False).encode())
@@ -105,9 +105,9 @@ class handler(BaseHTTPRequestHandler):
             
             # Configure Gemini
             genai.configure(api_key=gemini_key)
-            # Use gemini-pro - most stable
-            # HARDCODED: gemini-pro only (gemini-1.5-flash not available)
-            model = genai.GenerativeModel("gemini-pro")
+            # Use gemini-2.0-flash - most stable
+            # HARDCODED: gemini-2.0-flash only (gemini-1.5-flash not available)
+            model = genai.GenerativeModel("gemini-2.0-flash")
             # Generate summary
             prompt = f"""请分析这个 YouTube 视频并生成中文总结：
 
@@ -166,7 +166,7 @@ class handler(BaseHTTPRequestHandler):
             raise RuntimeError(
                 f"Gemini API 调用失败: {str(e)}\n\n"
                 f"错误类型: {type(e).__name__}\n\n"
-                f"模型: gemini-pro\n\n"
+                f"模型: gemini-2.0-flash\n\n"
                 f"详细: {error_detail[:300]}"
             )
     
