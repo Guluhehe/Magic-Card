@@ -8,7 +8,7 @@ const accentColor = document.getElementById("accent-color");
 const density = document.getElementById("density");
 const showHighlights = document.getElementById("show-highlights");
 const outputPanel = document.getElementById("output-panel"); // New
-const downloadButton = document.getElementById("download-card");
+const downloadButtons = Array.from(document.querySelectorAll("[data-download]"));
 const quickActions = document.querySelectorAll(".quick-actions button");
 
 const twitterLogoSvg = `
@@ -173,7 +173,7 @@ const applyCardStyles = () => {
   });
 };
 
-const downloadCard = async () => {
+const downloadCard = async (card, triggerButton) => {
   if (!outputPanel.classList.contains("visible")) {
     status.textContent = "请先生成卡片再下载。";
     status.style.color = "#ef4444";
@@ -185,12 +185,16 @@ const downloadCard = async () => {
     return;
   }
 
-  downloadButton.disabled = true;
-  const captureTarget = activeCard || cards[0];
+  if (triggerButton) {
+    triggerButton.disabled = true;
+  }
+  const captureTarget = card || activeCard || cards[0];
   if (!captureTarget) {
     status.textContent = "未找到可下载的卡片。";
     status.style.color = "#ef4444";
-    downloadButton.disabled = false;
+    if (triggerButton) {
+      triggerButton.disabled = false;
+    }
     return;
   }
   captureTarget.classList.add("is-capturing");
@@ -219,7 +223,9 @@ const downloadCard = async () => {
     status.style.color = "#ef4444";
   } finally {
     captureTarget.classList.remove("is-capturing");
-    downloadButton.disabled = false;
+    if (triggerButton) {
+      triggerButton.disabled = false;
+    }
   }
 };
 
@@ -229,7 +235,9 @@ const handleSubmit = async (event) => {
   if (!data || !data.id) {
     status.textContent = "暂不支持的链接，请输入有效的 YouTube 或 Twitter/X 链接。";
     status.style.color = "#ef4444";
-    downloadButton.disabled = true;
+    downloadButtons.forEach((button) => {
+      button.disabled = true;
+    });
     return;
   }
 
@@ -248,14 +256,18 @@ const handleSubmit = async (event) => {
     outputPanel.classList.remove("hidden");
     outputPanel.classList.add("visible");
     outputPanel.scrollIntoView({ behavior: "smooth", block: "start" });
-    downloadButton.disabled = false;
+    downloadButtons.forEach((button) => {
+      button.disabled = false;
+    });
   } catch (error) {
     console.error(error);
     status.textContent = `⚠️ 抓取失败: ${error.message}。`;
     status.style.color = "#ef4444";
     outputPanel.classList.add("hidden");
     outputPanel.classList.remove("visible");
-    downloadButton.disabled = true;
+    downloadButtons.forEach((button) => {
+      button.disabled = true;
+    });
   }
 };
 
@@ -263,7 +275,13 @@ form.addEventListener("submit", handleSubmit);
 accentColor.addEventListener("input", applyCardStyles);
 density.addEventListener("change", applyCardStyles);
 showHighlights.addEventListener("change", applyCardStyles);
-downloadButton.addEventListener("click", downloadCard);
+downloadButtons.forEach((button) => {
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const card = button.closest(".content-card");
+    downloadCard(card, button);
+  });
+});
 
 if (cards.length) {
   cards.forEach((card) => {
@@ -284,4 +302,6 @@ quickActions.forEach((button) => {
 });
 
 applyCardStyles();
-downloadButton.disabled = true;
+downloadButtons.forEach((button) => {
+  button.disabled = true;
+});
