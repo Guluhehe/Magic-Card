@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Render 连接测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+
+        button {
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+
+        button:hover {
+            background: #4f46e5;
+        }
+
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+
+        .success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🔧 Render 后端连接测试</h1>
+
+        <h3>步骤 1：输入你的 Render URL</h3>
+        <input type="text" id="renderUrl" placeholder="例如：https://magic-card-xyz.onrender.com" />
+
+        <h3>步骤 2：测试连接</h3>
+        <button onclick="testHealth()">测试 /api/test 端点</button>
+        <button onclick="testYouTube()">测试 YouTube 解析</button>
+
+        <div id="result"></div>
+    </div>
+
+    <script>
+        const resultDiv = document.getElementById('result');
+
+        function getBaseUrl() {
+            return document.getElementById('renderUrl').value.trim();
+        }
+
+        async function testHealth() {
+            const baseUrl = getBaseUrl();
+            if (!baseUrl) {
+                showResult('请先输入 Render URL！', false);
+                return;
+            }
+
+            resultDiv.textContent = '测试中...';
+            resultDiv.className = '';
+
+            try {
+                const response = await fetch(`${baseUrl}/api/test`);
+                const data = await response.json();
+
+                showResult(`✅ 成功！\n\n响应数据：\n${JSON.stringify(data, null, 2)}`, true);
+            } catch (error) {
+                showResult(`❌ 失败！\n\n错误：${error.message}\n\n可能原因：\n1. URL 不正确\n2. Render 服务未启动\n3. CORS 配置问题`, false);
+            }
+        }
+
+        async function testYouTube() {
+            const baseUrl = getBaseUrl();
+            if (!baseUrl) {
+                showResult('请先输入 Render URL！', false);
+                return;
+            }
+
+            resultDiv.textContent = '测试 YouTube 解析中（可能需要 10-30 秒）...';
+            resultDiv.className = '';
+
+            try {
+                const response = await fetch(`${baseUrl}/api/parse`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                        platform: 'YouTube'
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    showResult(`⚠️ 部分成功（后端正常但解析失败）\n\n错误：${data.message}\n\n这说明：\n- ✅ Render 服务正常\n- ✅ 前端能连接到后端\n- ❌ YouTube 字幕获取失败`, false);
+                } else {
+                    showResult(`✅ 完全成功！\n\n标题：${data.title}\n摘要：${data.summary}\n\n完整响应：\n${JSON.stringify(data, null, 2)}`, true);
+                }
+            } catch (error) {
+                showResult(`❌ 失败！\n\n错误：${error.message}`, false);
+            }
+        }
+
+        function showResult(message, isSuccess) {
+            resultDiv.textContent = message;
+            resultDiv.className = isSuccess ? 'success' : 'error';
+        }
+    </script>
+</body>
+
+</html>
