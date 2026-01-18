@@ -821,6 +821,7 @@ def fetch_twitter_text(url, cookie_map=None):
 
 
 @app.route('/api/parse', methods=['POST'])
+@app.route('/api/magic', methods=['POST'])
 def parse_content():
     data = request.get_json(silent=True) or {}
     url = data.get('url')
