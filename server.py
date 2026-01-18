@@ -492,7 +492,8 @@ def summarize_with_openai(text, platform):
     except Exception:
         return None
 
-    client = OpenAI(api_key=api_key)
+    base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
+    client = OpenAI(api_key=api_key, base_url=base_url)
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     max_chars = int(os.getenv("SUMMARY_INPUT_CHARS", "12000"))
     snippet = text[:max_chars]
@@ -643,7 +644,8 @@ def transcribe_audio_with_openai(file_path):
         from openai import OpenAI
     except Exception:
         raise RuntimeError("OpenAI SDK 未安装，无法进行音频转写。")
-    client = OpenAI(api_key=api_key)
+    base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
+    client = OpenAI(api_key=api_key, base_url=base_url)
     model = os.getenv("WHISPER_MODEL", "whisper-1")
     with open(file_path, "rb") as audio_file:
         result = client.audio.transcriptions.create(
