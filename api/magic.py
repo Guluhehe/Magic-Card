@@ -1,27 +1,25 @@
 """
-Vercel Serverless Function - Magic Card API (Gemini Only)
-Version: 3.0.0 - Clean Implementation
+Vercel Serverless Function - Magic Card API (Refined Logic)
+Inspired by: YoutubeSummarizer, AI-Video-Summarizer, Concise
 """
 from http.server import BaseHTTPRequestHandler
 import json
 import sys
 import os
 import re
+import requests
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
-        """Handle CORS preflight"""
         self.send_response(200)
         self._set_cors_headers()
         self.end_headers()
     
     def do_POST(self):
-        """Handle POST requests - Gemini ONLY"""
         try:
-            # Parse request
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             data = json.loads(body.decode('utf-8'))
@@ -32,8 +30,7 @@ class handler(BaseHTTPRequestHandler):
             if not url:
                 self._send_json(400, {"error": "Missing URL"})
                 return
-                
-            # Import server functions
+            
             from server import (
                 extract_youtube_id,
                 extract_twitter_id,
@@ -41,14 +38,10 @@ class handler(BaseHTTPRequestHandler):
                 build_twitter_summary
             )
             
-            # Process based on platform
-            result = {}
             if platform == 'YouTube':
-                result = self._parse_youtube_gemini(url, extract_youtube_id)
+                result = self._parse_youtube_refined(url, extract_youtube_id)
             elif platform == 'Twitter':
-                result = self._parse_twitter(url, extract_twitter_id,
-                                            fetch_twitter_text,
-                                            build_twitter_summary)
+                result = self._parse_twitter(url, extract_twitter_id, fetch_twitter_text, build_twitter_summary)
             else:
                 self._send_json(400, {"error": "Unsupported platform"})
                 return
@@ -62,72 +55,103 @@ class handler(BaseHTTPRequestHandler):
                 "message": str(e),
                 "detail": traceback.format_exc()[:500]
             })
-    
-    def _parse_youtube_gemini(self, url, extract_id):
-        """Parse YouTube video using Gemini API ONLY"""
+
+    def _get_youtube_metadata(self, video_id):
+        """Fetch video title and description without API key (Robust method)"""
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            html = response.text
+            
+            # Extract title using regex
+            title_match = re.search(r'<title>(.*?)</title>', html)
+            title = title_match.group(1).replace(" - YouTube", "") if title_match else "YouTube Video"
+            
+            # Extract description using regex
+            desc_match = re.search(r'"shortDescription":"(.*?)"', html)
+            description = desc_match.group(1).encode().decode('unicode-escape') if desc_match else ""
+            
+            return {"title": title, "description": description}
+        except:
+            return {"title": "Unknown Title", "description": ""}
+
+    def _parse_youtube_refined(self, url, extract_id):
+        """Refined YouTube parsing: Metadata + Best-effort Transcript"""
         video_id = extract_id(url)
         if not video_id:
             raise ValueError("无效的 YouTube 链接")
         
+        # 1. Get Metadata (This almost always works)
+        meta = self._get_youtube_metadata(video_id)
+        
+        # 2. Try to get Transcript (Best effort)
+        transcript = ""
+        try:
+            from youtube_transcript_api import YouTubeTranscriptApi
+            # We try to get transcript, if it fails, we still have metadata
+            entries = YouTubeTranscriptApi.get_transcript(video_id, languages=['zh-Hans', 'zh', 'en'])
+            transcript = " ".join([e['text'] for e in entries])
+        except Exception:
+            # If transcript fails (often on Vercel), we'll rely on Title + Description
+            pass
+            
+        # 3. Call Gemini with TEXT, not URL
         gemini_key = os.getenv("GEMINI_API_KEY")
         if not gemini_key:
             raise RuntimeError("未配置 GEMINI_API_KEY")
+            
+        content_to_analyze = f"标题: {meta['title']}\n描述: {meta['description']}\n\n"
+        if transcript:
+            content_to_analyze += f"字幕文本: {transcript[:15000]}" # Limit length
+        else:
+            content_to_analyze += "注: 无法获取字幕，请基于标题和描述进行深入分析。"
+
+        return self._call_gemini_with_fallback(content_to_analyze, video_id)
+
+    def _call_gemini_with_fallback(self, text, video_id):
+        """Try multiple models to overcome quota issues"""
+        import google.generativeai as genai
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
         
-        try:
-            import google.generativeai as genai
-            
-            genai.configure(api_key=gemini_key)
-            # HARDCODED: gemini-2.0-flash (Verified available)
-            model = genai.GenerativeModel("gemini-2.0-flash")
-            
-            prompt = f"""请分析这个 YouTube 视频并生成中文总结：
-视频链接：{url}
-
-请提供：
-1. **核心观点**：用 2-3 句话概括视频的主要内容
-2. **关键亮点**：列出 3-5 个最重要的要点
-3. **适用场景**：这个视频适合哪些人观看？
-
-请用中文回答，格式如下：
-
-【核心观点】
-...
-
-【关键亮点】
-1. ...
-2. ...
-3. ...
-
-【适用场景】
-..."""
-            
-            # Call Gemini
-            response = model.generate_content([prompt, url])
-            full_text = response.text
-            
-            # Parse
-            summary = self._extract_section(full_text, "【核心观点】")
-            highlights_text = self._extract_section(full_text, "【关键亮点】")
-            
-            highlights = []
-            if highlights_text:
-                for line in highlights_text.split('\n'):
-                    line = line.strip()
-                    if line and (line[0].isdigit() or line.startswith(('-', '•', '·'))):
-                        text = re.sub(r'^[\d\-•·.\s]+', '', line).strip()
-                        if text:
-                            highlights.append({"label": "要点", "text": text})
-            
-            return {
-                "title": "YouTube 视频解析 (Gemini AI)",
-                "summary": summary.strip() if summary else full_text[:200],
-                "length": f"视频 ID: {video_id}",
-                "confidence": "100%",
-                "highlights": highlights[:5]
-            }
-            
-        except Exception as e:
-            raise RuntimeError(f"Gemini 失败: {str(e)}")
+        # Models to try in order
+        models_to_try = ["gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-pro", "gemini-pro-latest"]
+        
+        last_error = ""
+        for model_name in models_to_try:
+            try:
+                model = genai.GenerativeModel(model_name)
+                prompt = "你是一个视频分析专家。请根据以下提取到的视频信息，生成一份简洁、高质量的中文总结卡片内容：\n\n" + text + "\n\n请按照以下格式回答：\n【核心观点】\n...\n【关键亮点】\n1. ...\n2. ...\n【适用场景】\n..."
+                
+                response = model.generate_content(prompt)
+                full_text = response.text
+                
+                # Parse
+                summary = self._extract_section(full_text, "【核心观点】")
+                highlights_text = self._extract_section(full_text, "【关键亮点】")
+                
+                highlights = []
+                if highlights_text:
+                    for line in highlights_text.split('\n'):
+                        line = line.strip()
+                        if line and (line[0].isdigit() or line.startswith(('-', '•', '·'))):
+                            clean_text = re.sub(r'^[\d\-•·.\s]+', '', line).strip()
+                            if clean_text: highlights.append({"label": "点", "text": clean_text})
+                
+                return {
+                    "title": "YouTube 视频分析 [AI精简版]",
+                    "summary": summary.strip() if summary else full_text[:300],
+                    "length": f"Video ID: {video_id}",
+                    "confidence": f"AI ({model_name})",
+                    "highlights": highlights[:5]
+                }
+            except Exception as e:
+                last_error = str(e)
+                continue # Try next model
+        
+        raise RuntimeError(f"所有 Gemini 模型均调用失败。最后一次错误: {last_error}")
 
     def _extract_section(self, text, marker):
         if marker not in text: return ""
@@ -143,10 +167,10 @@ class handler(BaseHTTPRequestHandler):
             "title": title,
             "summary": summary_data.get("summary", ""),
             "length": f"{len(text)} 字符",
-            "confidence": "90%",
+            "confidence": "AI",
             "highlights": summary_data.get("highlights", [])
         }
-    
+
     def _send_json(self, status, data):
         self.send_response(status)
         self._set_cors_headers()
