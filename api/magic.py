@@ -1,6 +1,6 @@
 """
-Vercel Serverless Function - Magic Card API (Refined Logic)
-Inspired by: YoutubeSummarizer, AI-Video-Summarizer, Concise
+Vercel Serverless Function - Magic Card API (OpenAI Version)
+Using OpenAI GPT for reliable YouTube summarization
 """
 from http.server import BaseHTTPRequestHandler
 import json
@@ -9,7 +9,6 @@ import os
 import re
 import requests
 
-# Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 class handler(BaseHTTPRequestHandler):
@@ -39,7 +38,7 @@ class handler(BaseHTTPRequestHandler):
             )
             
             if platform == 'YouTube':
-                result = self._parse_youtube_refined(url, extract_youtube_id)
+                result = self._parse_youtube_gpt(url, extract_youtube_id)
             elif platform == 'Twitter':
                 result = self._parse_twitter(url, extract_twitter_id, fetch_twitter_text, build_twitter_summary)
             else:
@@ -57,20 +56,18 @@ class handler(BaseHTTPRequestHandler):
             })
 
     def _get_youtube_metadata(self, video_id):
-        """Fetch video title and description without API key (Robust method)"""
+        """Fetch video title and description"""
         url = f"https://www.youtube.com/watch?v={video_id}"
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         try:
             response = requests.get(url, headers=headers, timeout=10)
             html = response.text
             
-            # Extract title using regex
             title_match = re.search(r'<title>(.*?)</title>', html)
             title = title_match.group(1).replace(" - YouTube", "") if title_match else "YouTube Video"
             
-            # Extract description using regex
             desc_match = re.search(r'"shortDescription":"(.*?)"', html)
             description = desc_match.group(1).encode().decode('unicode-escape') if desc_match else ""
             
@@ -78,83 +75,102 @@ class handler(BaseHTTPRequestHandler):
         except:
             return {"title": "Unknown Title", "description": ""}
 
-    def _parse_youtube_refined(self, url, extract_id):
-        """Refined YouTube parsing: Metadata + Best-effort Transcript"""
+    def _parse_youtube_gpt(self, url, extract_id):
+        """Parse YouTube using OpenAI GPT"""
         video_id = extract_id(url)
         if not video_id:
             raise ValueError("无效的 YouTube 链接")
         
-        # 1. Get Metadata (This almost always works)
+        # Get Metadata
         meta = self._get_youtube_metadata(video_id)
         
-        # 2. Try to get Transcript (Best effort)
+        # Try to get Transcript (best effort)
         transcript = ""
         try:
             from youtube_transcript_api import YouTubeTranscriptApi
-            # We try to get transcript, if it fails, we still have metadata
             entries = YouTubeTranscriptApi.get_transcript(video_id, languages=['zh-Hans', 'zh', 'en'])
             transcript = " ".join([e['text'] for e in entries])
-        except Exception:
-            # If transcript fails (often on Vercel), we'll rely on Title + Description
+        except:
             pass
             
-        # 3. Call Gemini with TEXT, not URL
-        gemini_key = os.getenv("GEMINI_API_KEY")
-        if not gemini_key:
-            raise RuntimeError("未配置 GEMINI_API_KEY")
-            
-        content_to_analyze = f"标题: {meta['title']}\n描述: {meta['description']}\n\n"
+        # Prepare content for GPT
+        content = f"视频标题: {meta['title']}\n\n视频描述: {meta['description']}\n\n"
         if transcript:
-            content_to_analyze += f"字幕文本: {transcript[:15000]}" # Limit length
+            content += f"视频字幕文本:\n{transcript[:10000]}"  # Limit to 10k chars
         else:
-            content_to_analyze += "注: 无法获取字幕，请基于标题和描述进行深入分析。"
+            content += "注: 无法获取字幕，请基于标题和描述进行深度分析。"
 
-        return self._call_gemini_with_fallback(content_to_analyze, video_id)
+        return self._call_openai(content, video_id)
 
-    def _call_gemini_with_fallback(self, text, video_id):
-        """Try multiple models to overcome quota issues"""
-        import google.generativeai as genai
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    def _call_openai(self, text_content, video_id):
+        """Call OpenAI GPT API"""
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("未配置 OPENAI_API_KEY")
         
-        # Models to try in order
-        models_to_try = ["gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-pro", "gemini-pro-latest"]
-        
-        last_error = ""
-        for model_name in models_to_try:
-            try:
-                model = genai.GenerativeModel(model_name)
-                prompt = "你是一个视频分析专家。请根据以下提取到的视频信息，生成一份简洁、高质量的中文总结卡片内容：\n\n" + text + "\n\n请按照以下格式回答：\n【核心观点】\n...\n【关键亮点】\n1. ...\n2. ...\n【适用场景】\n..."
-                
-                response = model.generate_content(prompt)
-                full_text = response.text
-                
-                # Parse
-                summary = self._extract_section(full_text, "【核心观点】")
-                highlights_text = self._extract_section(full_text, "【关键亮点】")
-                
-                highlights = []
-                if highlights_text:
-                    for line in highlights_text.split('\n'):
-                        line = line.strip()
-                        if line and (line[0].isdigit() or line.startswith(('-', '•', '·'))):
-                            clean_text = re.sub(r'^[\d\-•·.\s]+', '', line).strip()
-                            if clean_text: highlights.append({"label": "点", "text": clean_text})
-                
-                return {
-                    "title": "YouTube 视频分析 [AI精简版]",
-                    "summary": summary.strip() if summary else full_text[:300],
-                    "length": f"Video ID: {video_id}",
-                    "confidence": f"AI ({model_name})",
-                    "highlights": highlights[:5]
-                }
-            except Exception as e:
-                last_error = str(e)
-                continue # Try next model
-        
-        raise RuntimeError(f"所有 Gemini 模型均调用失败。最后一次错误: {last_error}")
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            
+            # Use GPT-4o-mini for cost efficiency
+            model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            
+            prompt = f"""你是一个专业的视频内容分析师。请根据以下视频信息，生成一份简洁、高质量的中文总结卡片。
+
+{text_content}
+
+请按照以下格式回答：
+
+【核心观点】
+用2-3句话概括视频的主要内容
+
+【关键亮点】
+1. 第一个重要观点
+2. 第二个重要观点  
+3. 第三个重要观点
+
+【适用场景】
+说明这个视频适合哪些人观看"""
+
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "你是一个专业的视频内容分析专家，擅长将长视频内容提炼为简洁的要点。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=800
+            )
+            
+            full_text = response.choices[0].message.content
+            
+            # Parse response
+            summary = self._extract_section(full_text, "【核心观点】")
+            highlights_text = self._extract_section(full_text, "【关键亮点】")
+            
+            highlights = []
+            if highlights_text:
+                for line in highlights_text.split('\n'):
+                    line = line.strip()
+                    if line and (line[0].isdigit() or line.startswith(('-', '•', '·'))):
+                        clean_text = re.sub(r'^[\d\-•·.\s]+', '', line).strip()
+                        if clean_text:
+                            highlights.append({"label": "亮点", "text": clean_text})
+            
+            return {
+                "title": "YouTube 视频精华 [GPT分析]",
+                "summary": summary.strip() if summary else full_text[:300],
+                "length": f"Video ID: {video_id}",
+                "confidence": f"AI ({model})",
+                "highlights": highlights[:5]
+            }
+            
+        except Exception as e:
+            raise RuntimeError(f"OpenAI API 调用失败: {str(e)}")
 
     def _extract_section(self, text, marker):
-        if marker not in text: return ""
+        if marker not in text:
+            return ""
         start = text.find(marker) + len(marker)
         next_marker = text.find("【", start)
         return text[start:next_marker].strip() if next_marker != -1 else text[start:].strip()
