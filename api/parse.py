@@ -1,7 +1,7 @@
 """
 Vercel Serverless Function - Magic Card API (Enhanced with Gemini)
-完整的 YouTube/Twitter 内容解析和 AI 总结
-支持 Gemini API 直接处理 YouTube 视频
+Version: 2.0.0 - Gemini Pro Integration
+Last Updated: 2026-01-18
 """
 from http.server import BaseHTTPRequestHandler
 import json
@@ -12,8 +12,27 @@ import re
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+# Force Vercel to rebuild - Version 2.0.0
+API_VERSION = "2.0.0-gemini-pro"
+
 
 class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        """Return API version info"""
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        
+        info = {
+            "version": API_VERSION,
+            "platform": "Vercel Serverless",
+            "gemini_enabled": bool(os.getenv("GEMINI_API_KEY")),
+            "default_model": os.getenv("GEMINI_MODEL", "gemini-pro")
+        }
+        
+        self.wfile.write(json.dumps(info, ensure_ascii=False).encode())
+    
     def do_OPTIONS(self):
         """Handle CORS preflight"""
         self.send_response(200)
@@ -21,7 +40,7 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
     
     def do_POST(self):
-        """Handle POST requests - full implementation"""
+        """Handle POST requests - full implementation with Gemini"""
         try:
             # Parse request
             content_length = int(self.headers.get('Content-Length', 0))
@@ -42,9 +61,6 @@ class handler(BaseHTTPRequestHandler):
             from server import (
                 extract_youtube_id,
                 extract_twitter_id,
-                fetch_youtube_transcript,
-                transcript_to_text,
-                build_youtube_summary,
                 fetch_twitter_text,
                 build_twitter_summary
             )
@@ -68,30 +84,33 @@ class handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json(500, {
                 "error": "extraction-failed",
-                "message": str(e)
+                "message": str(e),
+                "api_version": API_VERSION
             })
     
     def _parse_youtube_with_gemini(self, url, extract_id):
-        """Parse YouTube video using Gemini API (preferred) or transcripts (fallback)"""
+        """Parse YouTube video using Gemini API (NO transcript download!)"""
         # Extract video ID
         video_id = extract_id(url)
         if not video_id:
             raise ValueError("Invalid YouTube URL")
         
-        # Try Gemini API first (if configured)
+        # ONLY use Gemini - no fallback to transcripts
         gemini_key = os.getenv("GEMINI_API_KEY")
-        if gemini_key:
-            try:
-                import google.generativeai as genai
-                
-                # Configure Gemini
-                genai.configure(api_key=gemini_key)
-                # Use gemini-pro as default - most stable and compatible
-                model_name = os.getenv("GEMINI_MODEL", "gemini-pro")
-                model = genai.GenerativeModel(model_name)
-                
-                # Generate summary
-                prompt = f"""请分析这个 YouTube 视频并生成中文总结：
+        if not gemini_key:
+            raise RuntimeError("未配置 GEMINI_API_KEY。YouTube 功能需要 Gemini API。")
+        
+        try:
+            import google.generativeai as genai
+            
+            # Configure Gemini
+            genai.configure(api_key=gemini_key)
+            # Use gemini-pro - most stable
+            model_name = os.getenv("GEMINI_MODEL", "gemini-pro")
+            model = genai.GenerativeModel(model_name)
+            
+            # Generate summary
+            prompt = f"""请分析这个 YouTube 视频并生成中文总结：
 
 视频链接：{url}
 
@@ -112,51 +131,45 @@ class handler(BaseHTTPRequestHandler):
 
 【适用场景】
 ..."""
-                
-                response = model.generate_content([prompt, url])
-                full_text = response.text
-                
-                # Parse response
-                summary = self._extract_gemini_section(full_text, "【核心观点】")
-                highlights_text = self._extract_gemini_section(full_text, "【关键亮点】")
-                scenario_text = self._extract_gemini_section(full_text, "【适用场景】")
-                
-                highlights = []
-                if highlights_text:
-                    for line in highlights_text.split('\n'):
-                        line = line.strip()
-                        if line and (line[0].isdigit() or line.startswith(('-', '•', '·'))):
-                            text = re.sub(r'^[\d\-•·.\s]+', '', line).strip()
-                            if text:
-                                highlights.append({"label": "要点", "text": text})
-                
-                if scenario_text:
-                    highlights.append({"label": "适用场景", "text": scenario_text.strip()})
-                
-                return {
-                    "title": "YouTube 视频内容解析 (Gemini AI)",
-                    "summary": summary.strip() if summary else full_text[:200],
-                    "length": f"视频 ID: {video_id}",
-                    "confidence": "95% (Gemini)",
-                    "highlights": highlights[:5]
-                }
-                
-            except Exception as e:
-                # Gemini failed, return detailed error
-                import traceback
-                error_detail = traceback.format_exc()
-                raise RuntimeError(
-                    f"Gemini API 调用失败: {str(e)}\n\n"
-                    f"错误类型: {type(e).__name__}\n\n"
-                    f"详细信息: {error_detail[:500]}\n\n"
-                    f"请检查:\n"
-                    f"1. GEMINI_API_KEY 是否有效\n"
-                    f"2. API 配额是否充足\n"
-                    f"3. 网络连接是否正常"
-                )
-        
-        # No Gemini key configured
-        raise RuntimeError("未配置 GEMINI_API_KEY。请在 Vercel 环境变量中添加 Gemini API Key。")
+            
+            response = model.generate_content([prompt, url])
+            full_text = response.text
+            
+            # Parse response
+            summary = self._extract_gemini_section(full_text, "【核心观点】")
+            highlights_text = self._extract_gemini_section(full_text, "【关键亮点】")
+            scenario_text = self._extract_gemini_section(full_text, "【适用场景】")
+            
+            highlights = []
+            if highlights_text:
+                for line in highlights_text.split('\n'):
+                    line = line.strip()
+                    if line and (line[0].isdigit() or line.startswith(('-', '•', '·'))):
+                        text = re.sub(r'^[\d\-•·.\s]+', '', line).strip()
+                        if text:
+                            highlights.append({"label": "要点", "text": text})
+            
+            if scenario_text:
+                highlights.append({"label": "适用场景", "text": scenario_text.strip()})
+            
+            return {
+                "title": f"YouTube 视频解析 (Gemini {model_name})",
+                "summary": summary.strip() if summary else full_text[:200],
+                "length": f"视频 ID: {video_id}",
+                "confidence": "95% (Gemini AI)",
+                "highlights": highlights[:5]
+            }
+            
+        except Exception as e:
+            # Gemini failed, return detailed error
+            import traceback
+            error_detail = traceback.format_exc()
+            raise RuntimeError(
+                f"Gemini API 调用失败: {str(e)}\n\n"
+                f"错误类型: {type(e).__name__}\n\n"
+                f"模型: {model_name}\n\n"
+                f"详细: {error_detail[:300]}"
+            )
     
     def _extract_gemini_section(self, text, marker):
         """Extract section from Gemini response"""
@@ -173,12 +186,10 @@ class handler(BaseHTTPRequestHandler):
     
     def _parse_twitter(self, url, extract_id, fetch_text, build_summary):
         """Parse Twitter/X post"""
-        # Extract tweet ID
         tweet_id = extract_id(url)
         if not tweet_id:
             raise ValueError("Invalid Twitter URL")
         
-        # Get tweet text
         title, text, method = fetch_text(url, {})
         summary_data = build_summary(text)
         
@@ -211,5 +222,5 @@ class handler(BaseHTTPRequestHandler):
     def _set_cors_headers(self):
         """Set CORS headers"""
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
