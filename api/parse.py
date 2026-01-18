@@ -106,9 +106,8 @@ class handler(BaseHTTPRequestHandler):
             # Configure Gemini
             genai.configure(api_key=gemini_key)
             # Use gemini-pro - most stable
-            model_name = os.getenv("GEMINI_MODEL", "gemini-pro")
-            model = genai.GenerativeModel(model_name)
-            
+            # HARDCODED: gemini-pro only (gemini-1.5-flash not available)
+            model = genai.GenerativeModel("gemini-pro")
             # Generate summary
             prompt = f"""请分析这个 YouTube 视频并生成中文总结：
 
