@@ -194,7 +194,8 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
         
         response = json.dumps(data, ensure_ascii=False)
-        self.write(response.encode('utf-8'))
+        self.wfile.write(response.encode('utf-8'))
+
     
     def _set_cors_headers(self):
         """Set CORS headers"""
