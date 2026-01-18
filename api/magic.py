@@ -103,27 +103,22 @@ class handler(BaseHTTPRequestHandler):
         return self._call_openai(content, video_id)
 
     def _call_openai(self, text_content, video_id):
-        """Call OpenAI GPT API"""
+        """Call OpenAI GPT API using direct HTTP requests (avoid SDK version issues)"""
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("未配置 OPENAI_API_KEY")
         
-        try:
-            from openai import OpenAI
-            
-            # Support custom base_url (e.g., openkey.cloud)
-            base_url = os.getenv("OPENAI_BASE_URL")
-            
-            # Create client with minimal params for compatibility
-            if base_url:
-                client = OpenAI(api_key=api_key, base_url=base_url)
-            else:
-                client = OpenAI(api_key=api_key)
-            
-            # Use GPT-4o-mini for cost efficiency
-            model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            
-            prompt = f"""你是一个专业的视频内容分析师。请根据以下视频信息，生成一份简洁、高质量的中文总结卡片。
+        # Use direct HTTP requests instead of SDK to avoid version conflicts
+        base_url = os.getenv("OPENAI_BASE_URL", "https://openkey.cloud/v1")
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        
+        url = f"{base_url}/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+        
+        prompt = f"""你是一个专业的视频内容分析师。请根据以下视频信息，生成一份简洁、高质量的中文总结卡片。
 
 {text_content}
 
@@ -140,17 +135,22 @@ class handler(BaseHTTPRequestHandler):
 【适用场景】
 说明这个视频适合哪些人观看"""
 
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "你是一个专业的视频内容分析专家，擅长将长视频内容提炼为简洁的要点。"},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=800
-            )
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "你是一个专业的视频内容分析专家，擅长将长视频内容提炼为简洁的要点。"},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 800
+        }
+        
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
             
-            full_text = response.choices[0].message.content
+            result = response.json()
+            full_text = result['choices'][0]['message']['content']
             
             # Parse response
             summary = self._extract_section(full_text, "【核心观点】")
@@ -173,8 +173,10 @@ class handler(BaseHTTPRequestHandler):
                 "highlights": highlights[:5]
             }
             
-        except Exception as e:
-            raise RuntimeError(f"OpenAI API 调用失败: {str(e)}")
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"OpenAI API 请求失败: {str(e)}")
+        except (KeyError, IndexError) as e:
+            raise RuntimeError(f"OpenAI API 响应解析失败: {str(e)}")
 
     def _extract_section(self, text, marker):
         if marker not in text:
