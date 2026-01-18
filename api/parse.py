@@ -141,11 +141,21 @@ class handler(BaseHTTPRequestHandler):
                 }
                 
             except Exception as e:
-                # Gemini failed, return error with helpful message
-                raise RuntimeError(f"Gemini API 调用失败: {str(e)}。请检查 GEMINI_API_KEY 是否正确配置。")
+                # Gemini failed, return detailed error
+                import traceback
+                error_detail = traceback.format_exc()
+                raise RuntimeError(
+                    f"Gemini API 调用失败: {str(e)}\n\n"
+                    f"错误类型: {type(e).__name__}\n\n"
+                    f"详细信息: {error_detail[:500]}\n\n"
+                    f"请检查:\n"
+                    f"1. GEMINI_API_KEY 是否有效\n"
+                    f"2. API 配额是否充足\n"
+                    f"3. 网络连接是否正常"
+                )
         
         # No Gemini key configured
-        raise RuntimeError("未配置 GEMINI_API_KEY。请在 Vercel 环境变量中添加 Gemini API Key 以启用 YouTube 视频解析。")
+        raise RuntimeError("未配置 GEMINI_API_KEY。请在 Vercel 环境变量中添加 Gemini API Key。")
     
     def _extract_gemini_section(self, text, marker):
         """Extract section from Gemini response"""
