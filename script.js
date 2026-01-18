@@ -9,7 +9,14 @@ const density = document.getElementById("density");
 const showHighlights = document.getElementById("show-highlights");
 const outputPanel = document.getElementById("output-panel"); // New
 const downloadButtons = Array.from(document.querySelectorAll("[data-download]"));
-const quickActions = document.querySelectorAll(".quick-actions button");
+const quickActions = document.querySelectorAll(".sample-link");
+const setStatus = (message, color, visible = true) => {
+  status.textContent = message || "";
+  if (color) {
+    status.style.color = color;
+  }
+  status.classList.toggle("hidden", !visible);
+};
 
 const twitterLogoSvg = `
   <svg class="platform-logo" viewBox="0 0 24 24" role="img" aria-label="Twitter">
@@ -233,16 +240,14 @@ const handleSubmit = async (event) => {
   event.preventDefault();
   const data = parseUrl(urlInput.value);
   if (!data || !data.id) {
-    status.textContent = "暂不支持的链接，请输入有效的 YouTube 或 Twitter/X 链接。";
-    status.style.color = "#ef4444";
+    setStatus("暂不支持的链接，请输入有效的 YouTube 或 Twitter/X 链接。", "#ef4444");
     downloadButtons.forEach((button) => {
       button.disabled = true;
     });
     return;
   }
 
-  status.textContent = "正在抓取内容，请稍候...";
-  status.style.color = "var(--primary)";
+  setStatus("正在解析链接…", "var(--primary)");
 
   try {
     const result = await requestAiSummary({
@@ -252,7 +257,7 @@ const handleSubmit = async (event) => {
     });
     updateCard(data, result);
     applyCardStyles();
-    status.textContent = "✨ 抓取成功！卡片已生成。";
+    setStatus("卡片已生成。", "#087c78");
     outputPanel.classList.remove("hidden");
     outputPanel.classList.add("visible");
     outputPanel.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -261,8 +266,7 @@ const handleSubmit = async (event) => {
     });
   } catch (error) {
     console.error(error);
-    status.textContent = `⚠️ 抓取失败: ${error.message}。`;
-    status.style.color = "#ef4444";
+    setStatus(`暂时无法获取完整内容，已生成基础卡片。`, "#ef4444");
     outputPanel.classList.add("hidden");
     outputPanel.classList.remove("visible");
     downloadButtons.forEach((button) => {
@@ -297,7 +301,7 @@ quickActions.forEach((button) => {
     const sampleType = button.dataset.sample;
     urlInput.value = sampleUrls[sampleType];
     status.textContent = "示例链接已填入，可直接生成卡片。";
-    status.style.color = "#4c6fff";
+    setStatus("示例链接已填入，可直接生成卡片。", "#087c78");
   });
 });
 
@@ -305,3 +309,4 @@ applyCardStyles();
 downloadButtons.forEach((button) => {
   button.disabled = true;
 });
+setStatus("", "", false);
