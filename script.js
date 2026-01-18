@@ -2,17 +2,11 @@ const form = document.getElementById("parser-form");
 const urlInput = document.getElementById("url-input");
 const status = document.getElementById("status");
 const platformChip = document.getElementById("platform-chip");
-const platformName = document.getElementById("platform-name");
-const contentLength = document.getElementById("content-length");
-const cardTitle = document.getElementById("card-title");
-const cardSummary = document.getElementById("card-summary");
-const cardHighlights = document.getElementById("card-highlights");
-const sourceId = document.getElementById("source-id");
-const confidence = document.getElementById("confidence");
+const cards = Array.from(document.querySelectorAll(".content-card[data-card]"));
+let activeCard = cards[0];
 const accentColor = document.getElementById("accent-color");
 const density = document.getElementById("density");
 const showHighlights = document.getElementById("show-highlights");
-const contentCard = document.getElementById("content-card");
 const outputPanel = document.getElementById("output-panel"); // New
 const downloadButton = document.getElementById("download-card");
 const quickActions = document.querySelectorAll(".quick-actions button");
@@ -28,14 +22,14 @@ const sampleUrls = {
   twitter: "https://x.com/OpenAI/status/1790432049117327631",
 };
 
-const buildHighlights = (items) => {
-  cardHighlights.innerHTML = "";
+const buildHighlights = (container, items) => {
+  container.innerHTML = "";
   const safeItems = Array.isArray(items) ? items : [];
   if (!safeItems.length) {
-    cardHighlights.dataset.empty = "true";
+    container.dataset.empty = "true";
     return;
   }
-  cardHighlights.dataset.empty = "false";
+  container.dataset.empty = "false";
   safeItems.forEach((item) => {
     const wrapper = document.createElement("div");
     wrapper.className = "highlight";
@@ -44,7 +38,7 @@ const buildHighlights = (items) => {
     const text = document.createElement("div");
     text.textContent = item.text;
     wrapper.append(label, text);
-    cardHighlights.appendChild(wrapper);
+    container.appendChild(wrapper);
   });
 };
 
@@ -81,30 +75,44 @@ const parseUrl = (input) => {
   return null;
 };
 
-const updateCard = ({ platform, id }, detail = {}) => {
+const updateCard = ({ platform }, detail = {}) => {
   if (!detail) return;
 
   platformChip.textContent = platform;
-  platformName.textContent = platform;
-  if (platform === "Twitter") {
-    contentLength.innerHTML = twitterLogoSvg;
-    contentLength.classList.add("is-logo");
-    contentLength.setAttribute("aria-label", "Twitter");
-  } else {
-    contentLength.textContent = detail.length || "--";
-    contentLength.classList.remove("is-logo");
-    contentLength.removeAttribute("aria-label");
-  }
-  cardTitle.textContent = detail.title || "抓取结果";
-  cardSummary.textContent = detail.summary || "暂无摘要信息。";
-  sourceId.textContent = "Powered by MagicCard";
-  confidence.textContent = `置信度：${detail.confidence || "92%"}`;
-  buildHighlights(detail.highlights || []);
+  cards.forEach((card) => {
+    const platformEl = card.querySelector('[data-role="platform"]');
+    const lengthEl = card.querySelector('[data-role="length"]');
+    const titleEl = card.querySelector('[data-role="title"]');
+    const summaryEl = card.querySelector('[data-role="summary"]');
+    const highlightsEl = card.querySelector('[data-role="highlights"]');
+    const sourceEl = card.querySelector('[data-role="source"]');
+    const confidenceEl = card.querySelector('[data-role="confidence"]');
 
-  // Trigger animation
-  contentCard.style.animation = 'none';
-  contentCard.offsetHeight; // trigger reflow
-  contentCard.style.animation = null;
+    if (!platformEl || !lengthEl || !titleEl || !summaryEl || !highlightsEl || !sourceEl || !confidenceEl) {
+      return;
+    }
+
+    platformEl.textContent = platform;
+    if (platform === "Twitter") {
+      lengthEl.innerHTML = twitterLogoSvg;
+      lengthEl.classList.add("is-logo");
+      lengthEl.setAttribute("aria-label", "Twitter");
+    } else {
+      lengthEl.textContent = detail.length || "--";
+      lengthEl.classList.remove("is-logo");
+      lengthEl.removeAttribute("aria-label");
+    }
+
+    titleEl.textContent = detail.title || "抓取结果";
+    summaryEl.textContent = detail.summary || "暂无摘要信息。";
+    sourceEl.textContent = "Powered by MagicCard";
+    confidenceEl.textContent = `置信度：${detail.confidence || "92%"}`;
+    buildHighlights(highlightsEl, detail.highlights || []);
+
+    card.style.animation = "none";
+    card.offsetHeight;
+    card.style.animation = null;
+  });
 };
 
 const getApiBase = () => {
@@ -155,10 +163,14 @@ const applyCardStyles = () => {
   const densityValue = density.value;
   const highlightMode = showHighlights.value;
 
-  contentCard.style.setProperty("--accent", chosenAccent);
-  contentCard.classList.toggle("compact", densityValue === "compact");
-  const isEmpty = cardHighlights.dataset.empty === "true";
-  cardHighlights.classList.toggle("hidden", highlightMode === "hide" || isEmpty);
+  cards.forEach((card) => {
+    const highlightsEl = card.querySelector('[data-role="highlights"]');
+    if (!highlightsEl) return;
+    const isEmpty = highlightsEl.dataset.empty === "true";
+    card.style.setProperty("--accent", chosenAccent);
+    card.classList.toggle("compact", densityValue === "compact");
+    highlightsEl.classList.toggle("hidden", highlightMode === "hide" || isEmpty);
+  });
 };
 
 const downloadCard = async () => {
@@ -174,13 +186,20 @@ const downloadCard = async () => {
   }
 
   downloadButton.disabled = true;
-  contentCard.classList.add("is-capturing");
+  const captureTarget = activeCard || cards[0];
+  if (!captureTarget) {
+    status.textContent = "未找到可下载的卡片。";
+    status.style.color = "#ef4444";
+    downloadButton.disabled = false;
+    return;
+  }
+  captureTarget.classList.add("is-capturing");
   try {
     if (document.fonts && document.fonts.ready) {
       await document.fonts.ready;
     }
     const pixelRatio = Math.min(4, Math.max(2, window.devicePixelRatio * 2));
-    const blob = await htmlToImage.toBlob(contentCard, {
+    const blob = await htmlToImage.toBlob(captureTarget, {
       backgroundColor: null,
       cacheBust: true,
       pixelRatio,
@@ -199,7 +218,7 @@ const downloadCard = async () => {
     status.textContent = "⚠️ 下载失败，请重试。";
     status.style.color = "#ef4444";
   } finally {
-    contentCard.classList.remove("is-capturing");
+    captureTarget.classList.remove("is-capturing");
     downloadButton.disabled = false;
   }
 };
@@ -245,6 +264,15 @@ accentColor.addEventListener("input", applyCardStyles);
 density.addEventListener("change", applyCardStyles);
 showHighlights.addEventListener("change", applyCardStyles);
 downloadButton.addEventListener("click", downloadCard);
+
+if (cards.length) {
+  cards.forEach((card) => {
+    card.addEventListener("click", () => {
+      cards.forEach((item) => item.classList.toggle("is-selected", item === card));
+      activeCard = card;
+    });
+  });
+}
 
 quickActions.forEach((button) => {
   button.addEventListener("click", () => {

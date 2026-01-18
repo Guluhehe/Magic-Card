@@ -8,44 +8,27 @@
   <title>内容卡片解析器</title>
   <link rel="stylesheet" href="styles.css" />
   <link
-    href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Inter:wght@400;500;600;700&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
     rel="stylesheet" />
 </head>
 
 <body>
   <div class="page">
-    <header class="hero">
-      <div>
-        <p class="tag">AI 内容卡片</p>
-        <h1>输入 YouTube 或 Twitter 链接，一键生成重点内容卡片</h1>
-        <p class="subtitle">
-          将视频或推文链接解析为结构化摘要，筛选重点信息，并以精美卡片形式输出。
-        </p>
-      </div>
-      <div class="hero-card">
-        <div class="hero-card__label">示例输出</div>
-        <div class="content-card preview">
-          <div class="card-header">
-            <span class="platform">YouTube</span>
-            <span class="time">03:21</span>
-          </div>
-          <h3>如何在 3 分钟内理解这段内容</h3>
-          <ul>
-            <li>核心观点：用故事化结构传递复杂信息。</li>
-            <li>关键数据：78% 的观众在 15 秒内决定是否继续观看。</li>
-            <li>行动建议：将结论放在前 10 秒内。</li>
-          </ul>
-        </div>
-      </div>
+    <header class="masthead">
+      <div class="brand">MagicCard</div>
+      <div class="mastline">YouTube · Twitter</div>
     </header>
 
-    <main class="workspace">
+    <main class="focus">
       <section class="input-panel">
-        <h2>开始解析</h2>
-        <p class="helper">支持 YouTube 视频或 Twitter 推文链接（需后端服务）。</p>
-        <form id="parser-form">
+        <p class="tag">AI 内容引擎</p>
+        <h1>把链接炼成科幻内容卡片</h1>
+        <p class="subtitle">
+          复制 YouTube 或 Twitter 链接，系统会抓取内容并生成多版式卡片。选择喜欢的风格再微调。
+        </p>
+        <form id="parser-form" class="input-form">
           <label for="url-input">链接地址</label>
-          <div class="input-group">
+          <div class="input-shell">
             <input id="url-input" type="url" placeholder="粘贴链接，例如 https://www.youtube.com/watch?v=xxxx" required />
             <button type="submit">生成卡片</button>
           </div>
@@ -58,16 +41,19 @@
         <div class="status" id="status">等待链接输入...</div>
       </section>
 
-      <section class="output-panel hidden" id="output-panel">
+      <aside class="output-panel hidden" id="output-panel">
         <div class="output-header">
-          <h2>生成结果</h2>
+          <div>
+            <h2>生成结果</h2>
+            <p class="output-note">挑一个版式，再做小幅编辑。</p>
+          </div>
           <span class="chip" id="platform-chip">未检测</span>
         </div>
 
         <div class="style-panel-inline">
           <div class="field-mini">
             <label>强调色</label>
-            <input id="accent-color" type="color" value="#4c6fff" />
+            <input id="accent-color" type="color" value="#0fbfba" />
           </div>
           <div class="field-mini">
             <label>密度</label>
@@ -85,23 +71,57 @@
           </div>
         </div>
 
-        <div class="content-card" id="content-card">
-          <div class="card-header">
-            <span class="platform" id="platform-name">--</span>
-            <span class="time" id="content-length">--</span>
-          </div>
-          <h3 id="card-title">请先输入链接生成内容</h3>
-          <p class="summary" id="card-summary">
-            我们会解析链接内容，提取重点信息，并以易读结构呈现。
-          </p>
-          <div class="highlights" id="card-highlights"></div>
-          <div class="meta">
-            <span id="source-id">Powered by MagicCard</span>
-            <span id="confidence">置信度：--</span>
-          </div>
-          <button class="download-btn" id="download-card" type="button">Download</button>
+        <div class="card-gallery">
+          <article class="content-card variant-nebula is-selected" data-card="nebula">
+            <div class="variant-label">Nebula</div>
+            <div class="card-header">
+              <span class="platform" data-role="platform">YouTube</span>
+              <span class="time" data-role="length">--</span>
+            </div>
+            <h3 data-role="title">请先输入链接生成内容</h3>
+            <p class="summary" data-role="summary">我们会解析链接内容，提取重点信息，并以易读结构呈现。</p>
+            <div class="highlights" data-role="highlights"></div>
+            <div class="meta">
+              <span data-role="source">Powered by MagicCard</span>
+              <span data-role="confidence">置信度：--</span>
+            </div>
+          </article>
+
+          <article class="content-card variant-circuit" data-card="circuit">
+            <div class="variant-label">Circuit</div>
+            <div class="card-header">
+              <span class="platform" data-role="platform">YouTube</span>
+              <span class="time" data-role="length">--</span>
+            </div>
+            <h3 data-role="title">请先输入链接生成内容</h3>
+            <p class="summary" data-role="summary">我们会解析链接内容，提取重点信息，并以易读结构呈现。</p>
+            <div class="highlights" data-role="highlights"></div>
+            <div class="meta">
+              <span data-role="source">Powered by MagicCard</span>
+              <span data-role="confidence">置信度：--</span>
+            </div>
+          </article>
+
+          <article class="content-card variant-prism" data-card="prism">
+            <div class="variant-label">Prism</div>
+            <div class="card-header">
+              <span class="platform" data-role="platform">YouTube</span>
+              <span class="time" data-role="length">--</span>
+            </div>
+            <h3 data-role="title">请先输入链接生成内容</h3>
+            <p class="summary" data-role="summary">我们会解析链接内容，提取重点信息，并以易读结构呈现。</p>
+            <div class="highlights" data-role="highlights"></div>
+            <div class="meta">
+              <span data-role="source">Powered by MagicCard</span>
+              <span data-role="confidence">置信度：--</span>
+            </div>
+          </article>
         </div>
-      </section>
+
+        <div class="card-actions">
+          <button class="download-btn" id="download-card" type="button">Download Selected</button>
+        </div>
+      </aside>
     </main>
   </div>
 
