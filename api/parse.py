@@ -1,6 +1,6 @@
 """
-Vercel Serverless Function - Progressive Debug Version
-逐步测试导入和功能
+Vercel Serverless Function - Magic Card API
+完整的 YouTube/Twitter 内容解析和 AI 总结
 """
 from http.server import BaseHTTPRequestHandler
 import json
@@ -19,9 +19,9 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
     
     def do_POST(self):
-        """Handle POST requests"""
+        """Handle POST requests - full implementation"""
         try:
-            # Step 1: Parse request
+            # Parse request
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             data = json.loads(body.decode('utf-8'))
@@ -29,51 +29,99 @@ class handler(BaseHTTPRequestHandler):
             url = data.get('url', '')
             platform = data.get('platform', '')
             
-            # Step 2: Try to import server functions
-            try:
-                from server import (
-                    extract_youtube_id,
-                    fetch_youtube_transcript,
-                    transcript_to_text
-                )
-                import_status = "✅ Import successful"
-            except Exception as e:
-                import_status = f"❌ Import failed: {str(e)}"
-                self._send_json(200, {
-                    "status": "debug",
-                    "import_status": import_status,
-                    "received_url": url,
-                    "received_platform": platform,
-                    "python_version": sys.version,
-                    "sys_path": sys.path[:3]
+            if not url or not platform:
+                self._send_json(400, {
+                    "error": "bad-request",
+                    "message": "Missing url or platform"
                 })
                 return
             
-            # Step 3: Try to parse URL
+            # Import server functions
+            from server import (
+                extract_youtube_id,
+                extract_twitter_id,
+                fetch_youtube_transcript,
+                transcript_to_text,
+                build_youtube_summary,
+                fetch_twitter_text,
+                build_twitter_summary
+            )
+            
+            # Process based on platform
             if platform == 'YouTube':
-                video_id = extract_youtube_id(url)
-                
-                result = {
-                    "status": "debug",
-                    "import_status": import_status,
-                    "video_id": video_id,
-                    "next_step": "Will try to fetch transcript..."
-                }
+                result = self._parse_youtube(url, extract_youtube_id, 
+                                            fetch_youtube_transcript,
+                                            transcript_to_text,
+                                            build_youtube_summary)
+            elif platform == 'Twitter':
+                result = self._parse_twitter(url, extract_twitter_id,
+                                            fetch_twitter_text,
+                                            build_twitter_summary)
             else:
-                result = {
-                    "status": "debug",
-                    "import_status": import_status,
-                    "message": f"Platform {platform} not tested yet"
-                }
+                self._send_json(400, {
+                    "error": "bad-request",
+                    "message": f"Unsupported platform: {platform}"
+                })
+                return
             
             self._send_json(200, result)
             
         except Exception as e:
             self._send_json(500, {
-                "error": "debug-error",
-                "message": str(e),
-                "type": type(e).__name__
+                "error": "extraction-failed",
+                "message": str(e)
             })
+    
+    def _parse_youtube(self, url, extract_id, fetch_transcript, to_text, build_summary):
+        """Parse YouTube video"""
+        # Extract video ID
+        video_id = extract_id(url)
+        if not video_id:
+            raise ValueError("Invalid YouTube URL")
+        
+        # Get transcript
+        transcript_data = fetch_transcript(video_id)
+        full_text = to_text(transcript_data)
+        
+        if not full_text:
+            raise RuntimeError("未能获取字幕")
+        
+        # Get AI summary
+        summary_data = build_summary(full_text)
+        
+        return {
+            "title": "YouTube 视频内容实时解析",
+            "summary": summary_data.get("summary", ""),
+            "length": f"{len(full_text) // 1000}k 字符",
+            "confidence": "100% (Direct Extraction)",
+            "highlights": summary_data.get("highlights", [])
+        }
+    
+    def _parse_twitter(self, url, extract_id, fetch_text, build_summary):
+        """Parse Twitter/X post"""
+        # Extract tweet ID
+        tweet_id = extract_id(url)
+        if not tweet_id:
+            raise ValueError("Invalid Twitter URL")
+        
+        # Get tweet text
+        title, text, method = fetch_text(url, {})
+        summary_data = build_summary(text)
+        
+        confidences = {
+            "fixtweet": "95%",
+            "syndication": "75%",
+            "snscrape": "80%",
+            "playwright": "60%",
+        }
+        
+        return {
+            "title": title,
+            "summary": summary_data.get("summary", ""),
+            "length": f"{len(text)} 字符",
+            "confidence": confidences.get(method, "70%"),
+            "highlights": summary_data.get("highlights", [])
+        }
     
     def _send_json(self, status_code, data):
         """Send JSON response"""
