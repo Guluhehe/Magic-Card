@@ -7,6 +7,7 @@ python-dotenv==1.0.0
 gunicorn==21.2.0
 google-generativeai  # Gemini API for YouTube video understanding
 yt-dlp==2024.3.10
+httpx==0.27.2
 
 # Optional dependencies for Twitter scraping
 # playwright==1.40.0
