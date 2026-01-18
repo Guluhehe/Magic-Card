@@ -130,7 +130,7 @@ const getApiBase = () => {
 
 const requestAiSummary = async ({ url, platform, id }) => {
   const apiBase = getApiBase();
-  const response = await fetch(`${apiBase}/api/parse`, {
+  const response = await fetch(`${apiBase}/api/magic`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
