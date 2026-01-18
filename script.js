@@ -115,13 +115,17 @@ const getApiBase = () => {
   const windowBase = (window.MAGICCARD_API_BASE || "").trim();
   if (windowBase) return windowBase;
   if (metaBase) return metaBase;
+
+  // Check if running locally
   const host = window.location.hostname;
   const protocol = window.location.protocol;
   const isLocal =
     host === "localhost" ||
     host === "127.0.0.1" ||
     protocol === "file:";
-  return isLocal ? "http://127.0.0.1:5000" : "";
+
+  // Use local backend for development, Render for production
+  return isLocal ? "http://127.0.0.1:5000" : "https://magic-card-3p5l.onrender.com";
 };
 
 const requestAiSummary = async ({ url, platform, id }) => {
