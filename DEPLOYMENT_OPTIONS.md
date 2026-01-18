@@ -95,11 +95,9 @@ railway up
 railway domain
 ```
 
-**修改前端**（`script.js`）：
-```javascript
-const getApiBase = () => {
-  return "https://your-backend.railway.app";
-};
+**修改前端**（`index.html`）：
+```html
+<meta name="magiccard-api-base" content="https://your-backend.railway.app" />
 ```
 
 ### 方案 B：完全在 Vercel 上（需 Pro）
@@ -156,11 +154,9 @@ Vercel Free 有严格限制：
    - Settings → Generate Domain
    - 获取类似：`magic-card-production.up.railway.app`
 
-6. **修改前端**（`script.js` 第 100 行左右）：
-   ```javascript
-   const getApiBase = () => {
-     return "https://magic-card-production.up.railway.app";
-   };
+6. **修改前端**（`index.html` 头部）：
+   ```html
+   <meta name="magiccard-api-base" content="https://magic-card-production.up.railway.app" />
    ```
 
 7. **提交并重新部署 Vercel**：

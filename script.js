@@ -108,6 +108,13 @@ const updateCard = ({ platform, id }, detail = {}) => {
 };
 
 const getApiBase = () => {
+  const metaBase = document
+    .querySelector('meta[name="magiccard-api-base"]')
+    ?.getAttribute("content")
+    ?.trim();
+  const windowBase = (window.MAGICCARD_API_BASE || "").trim();
+  if (windowBase) return windowBase;
+  if (metaBase) return metaBase;
   const host = window.location.hostname;
   const protocol = window.location.protocol;
   const isLocal =
