@@ -152,7 +152,7 @@ class handler(BaseHTTPRequestHandler):
                 highlights.append({"label": "适用场景", "text": scenario_text.strip()})
             
             return {
-                "title": f"YouTube 视频解析 (Gemini {model_name})",
+                "title": f"YouTube 视频解析 (Gemini Pro)",
                 "summary": summary.strip() if summary else full_text[:200],
                 "length": f"视频 ID: {video_id}",
                 "confidence": "95% (Gemini AI)",
@@ -166,7 +166,7 @@ class handler(BaseHTTPRequestHandler):
             raise RuntimeError(
                 f"Gemini API 调用失败: {str(e)}\n\n"
                 f"错误类型: {type(e).__name__}\n\n"
-                f"模型: {model_name}\n\n"
+                f"模型: gemini-pro\n\n"
                 f"详细: {error_detail[:300]}"
             )
     
