@@ -86,8 +86,8 @@ class handler(BaseHTTPRequestHandler):
                 
                 # Configure Gemini
                 genai.configure(api_key=gemini_key)
-                # Use the correct model name for v1beta API
-                model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash-latest")
+                # Use gemini-pro as default - most stable and compatible
+                model_name = os.getenv("GEMINI_MODEL", "gemini-pro")
                 model = genai.GenerativeModel(model_name)
                 
                 # Generate summary
