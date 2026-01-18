@@ -1,3 +1,4 @@
+import base64
 import html
 import json
 import os
@@ -656,6 +657,8 @@ def classify_youtube_error(*errors):
         return "UNKNOWN"
     if "not a bot" in text or "sign in" in text or "429" in text:
         return "BOT_BLOCKED"
+    if "yt-dlp" in text or "subtitles" in text:
+        return "SUBTITLE_DLP_FAILED"
     if "caption" in text or "subtitle" in text or "transcript" in text or "字幕" in text:
         return "NO_CAPTION"
     if "yt-dlp" in text or "download" in text or "audio" in text:
@@ -749,6 +752,10 @@ def is_audio_transcription_enabled():
     return os.getenv("ENABLE_AUDIO_TRANSCRIPT", "").lower() in ("1", "true", "yes")
 
 
+def is_subtitle_dlp_enabled():
+    return os.getenv("ENABLE_SUBTITLE_DLP", "1").lower() in ("1", "true", "yes")
+
+
 def transcribe_audio_with_openai(file_path):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -806,6 +813,67 @@ def transcribe_youtube_audio(video_url):
         transcript = transcribe_audio_with_openai(file_path)
         if not transcript.strip():
             raise RuntimeError("音频转写结果为空。")
+        return transcript
+
+
+def fetch_youtube_subtitles_ytdlp(video_url):
+    try:
+        from yt_dlp import YoutubeDL
+    except Exception:
+        raise RuntimeError("yt-dlp 未安装，无法下载字幕。")
+
+    languages = get_preferred_transcript_languages()
+    clients = [c.strip() for c in os.getenv("YOUTUBE_DLP_CLIENTS", "").split(",") if c.strip()]
+    proxy = os.getenv("YOUTUBE_PROXY", "").strip()
+    cookies_b64 = os.getenv("YOUTUBE_COOKIES_B64", "").strip()
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        cookie_path = None
+        if cookies_b64:
+            try:
+                cookie_path = os.path.join(tmp_dir, "cookies.txt")
+                with open(cookie_path, "wb") as cookie_file:
+                    cookie_file.write(base64.b64decode(cookies_b64))
+            except Exception as exc:
+                raise RuntimeError(f"cookie decode failed: {exc}")
+
+        ydl_opts = {
+            "skip_download": True,
+            "quiet": True,
+            "no_warnings": True,
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            "subtitlesformat": "vtt",
+            "outtmpl": os.path.join(tmp_dir, "%(id)s.%(ext)s"),
+            "socket_timeout": 10,
+        }
+        if clients:
+            ydl_opts["extractor_args"] = {"youtube": {"player_client": clients}}
+        if proxy:
+            ydl_opts["proxy"] = proxy
+        if cookie_path:
+            ydl_opts["cookiefile"] = cookie_path
+
+        with YoutubeDL(ydl_opts) as ydl:
+            ydl.extract_info(video_url, download=True)
+
+        vtt_files = [f for f in os.listdir(tmp_dir) if f.endswith(".vtt")]
+        if not vtt_files:
+            raise RuntimeError("yt-dlp 未生成字幕文件。")
+
+        def pick_best(files):
+            for lang in languages:
+                for name in files:
+                    if f".{lang}." in name or name.endswith(f".{lang}.vtt"):
+                        return name
+            return files[0]
+
+        chosen = pick_best(vtt_files)
+        with open(os.path.join(tmp_dir, chosen), "r", encoding="utf-8", errors="ignore") as f:
+            raw_text = f.read()
+        transcript = parse_caption_payload(raw_text)
+        if not transcript:
+            raise RuntimeError("yt-dlp 字幕解析为空。")
         return transcript
 
 
@@ -957,6 +1025,7 @@ def parse_content():
                 return jsonify({"error": "Invalid YouTube URL"}), 400
 
             transcript_error = None
+            subtitle_error = None
             audio_error = None
             metadata_error = None
             full_text = ""
@@ -970,6 +1039,15 @@ def parse_content():
                     source = "transcript"
             except Exception as exc:
                 transcript_error = exc
+
+            if not full_text and is_subtitle_dlp_enabled():
+                try:
+                    subtitle_data = fetch_youtube_subtitles_ytdlp(url)
+                    full_text = transcript_to_text(subtitle_data)
+                    if full_text:
+                        source = "subtitle"
+                except Exception as exc:
+                    subtitle_error = exc
 
             if not full_text and is_audio_transcription_enabled():
                 try:
@@ -989,12 +1067,14 @@ def parse_content():
                     metadata_error = exc
 
             if not full_text:
-                category = classify_youtube_error(transcript_error, audio_error, metadata_error)
+                category = classify_youtube_error(transcript_error, subtitle_error, audio_error, metadata_error)
                 message = f"未能获取视频内容（{category}）。"
                 if is_debug_enabled():
                     details = []
                     if transcript_error:
                         details.append(f"transcript_error={transcript_error}")
+                    if subtitle_error:
+                        details.append(f"subtitle_error={subtitle_error}")
                     if audio_error:
                         details.append(f"audio_error={audio_error}")
                     if metadata_error:
@@ -1008,6 +1088,8 @@ def parse_content():
             title = title or "YouTube 视频内容实时解析 (Real Prototype)"
             if source == "transcript":
                 confidence = "100% (Transcript + AI)" if used_llm else "85% (Transcript)"
+            elif source == "subtitle":
+                confidence = "95% (Subtitle + AI)" if used_llm else "80% (Subtitle)"
             elif source == "audio":
                 confidence = "90% (Audio + AI)" if used_llm else "70% (Audio)"
             else:
