@@ -257,3 +257,38 @@ quickActions.forEach((button) => {
 
 applyCardStyles();
 downloadButton.disabled = true;
+const getApiBase = () => {
+    // Force empty string for Vercel relative path
+    // But allow local override if needed
+    const host = window.location.hostname;
+    const isLocal = host === "localhost" || host === "127.0.0.1";
+    return isLocal ? "http://127.0.0.1:5000" : "";
+};
+
+const requestAiSummary = async ({ url, platform, id }) => {
+    const apiBase = getApiBase();
+    console.log(`[MagicCard] Requesting AI summary for ${platform}...`);
+
+    // NEW ENDPOINT: /api/magic (Bypasses old cache)
+    // Local dev still uses /api/parse
+    const endpoint = apiBase ? `${apiBase}/api/parse` : '/api/magic';
+
+    try {
+        const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ url, platform }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+        }
+        return await response.json();
+    } catch (error) {
+        console.error("AI Summary Error:", error);
+        throw error;
+    }
+};
