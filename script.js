@@ -125,7 +125,7 @@ const getApiBase = () => {
     protocol === "file:";
 
   // Use local backend for development, Render for production
-  return isLocal ? "http://127.0.0.1:5000" : "https://magic-card-3p5l.onrender.com";
+  return isLocal ? "http://127.0.0.1:5000" : "";
 };
 
 const requestAiSummary = async ({ url, platform, id }) => {
