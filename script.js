@@ -30,6 +30,12 @@ const twitterLogoSvg = `
   </svg>
 `;
 
+const youtubeLogoSvg = `
+  <svg class="platform-logo" viewBox="0 0 24 24" role="img" aria-label="YouTube" style="width:24px;height:24px;display:inline-block;vertical-align:middle;color:#FF0000;">
+    <path fill="currentColor" d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+  </svg>
+`;
+
 const sampleUrls = {
   youtube: "https://www.youtube.com/watch?v=NjYt_7R-1Dk",
   twitter: "https://x.com/OpenAI/status/1790432049117327631",
@@ -69,7 +75,10 @@ const createHighlightHTML = (items) => {
 const renderCard = (theme, data) => {
   const { config } = appState;
   const isTwitter = data.platform === "Twitter";
-  const lengthDisplay = isTwitter ? twitterLogoSvg : (data.length || "--");
+  const lengthDisplay = data.length || ""; // Just text
+
+  // Choose Icon
+  const platformIcon = isTwitter ? twitterLogoSvg : youtubeLogoSvg;
 
   const card = document.createElement("article");
   card.className = `content-card variant-${theme} layout-${config.layout}`;
@@ -84,7 +93,10 @@ const renderCard = (theme, data) => {
   // Common Elements
   const headerHTML = `
     <div class="card-header">
-      <span class="platform">${data.platform}</span>
+      <span class="platform" style="display:flex;align-items:center;gap:6px;">
+        ${platformIcon}
+        <span style="font-size:12px;opacity:0.8;font-weight:600;">${data.platform}</span>
+      </span>
       <span class="time">${lengthDisplay}</span>
     </div>
   `;
@@ -105,7 +117,7 @@ const renderCard = (theme, data) => {
     </div>
   `;
 
-  const downloadBtnHTML = `<button class="download-btn" type="button">Download ${theme}</button>`;
+  const downloadBtnHTML = `<button class="download-btn" type="button">下载</button>`;
 
   // Assemble based on Layout
   // Currently, we use CSS to reorder, so DOM order can stay mostly consistent.
