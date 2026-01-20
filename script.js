@@ -239,8 +239,21 @@ const downloadCard = async (card, btn) => {
   if (typeof htmlToImage === "undefined") return;
   btn.disabled = true;
   card.classList.add("is-capturing");
+
   try {
-    const blob = await htmlToImage.toBlob(card, { pixelRatio: 3 });
+    // Enforce specific width for capture to prevent layout shifts on mobile/narrow screens
+    const scale = 3;
+    const blob = await htmlToImage.toBlob(card, {
+      pixelRatio: scale,
+      width: 520, // Enforce desktop-like width for the image
+      style: {
+        margin: '0',
+        transform: 'none', // Reset any hover transforms
+        boxShadow: 'none', // Optional: clean up shadow if desired in image
+        background: 'white' // Ensure background is opaque if transparent
+      }
+    });
+
     const link = document.createElement("a");
     link.download = `magic-card-${Date.now()}.png`;
     link.href = URL.createObjectURL(blob);
