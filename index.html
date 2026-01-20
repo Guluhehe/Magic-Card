@@ -7,6 +7,7 @@
   <meta name="magiccard-api-base" content="https://magic-card-3p5l.onrender.com" />
   <title>Magic Card：一键生成你的内容卡片AI 内容</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="layouts.css" />
   <link
     href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
     rel="stylesheet" />
@@ -21,18 +22,35 @@
 
     <main class="hero-stack">
       <section class="hero">
-        <h1>
-          <span>把一个链接</span>
-          <span>变成一张可读卡片</span>
-        </h1>
+        <div class="hero-content">
+          <h1 class="hero-title">
+            MagicCard
+            <span class="hero-subtitle">链接转卡片工具</span>
+          </h1>
+          <p class="hero-desc">输入 YouTube 或 Twitter 链接，一键生成精美内容卡片</p>
+        </div>
+
         <form id="parser-form" class="input-form">
           <label class="sr-only" for="url-input">链接地址</label>
           <div class="input-line">
             <div class="input-row">
-              <span class="input-icon">🔗</span>
-              <input id="url-input" type="url" placeholder="粘贴一个 YouTube 或 Twitter 链接" required />
+              <span class="input-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                </svg>
+              </span>
+              <input id="url-input" type="url" placeholder="在此粘贴 YouTube 或 Twitter 链接..." required />
             </div>
-            <button class="primary-btn" type="submit">立即生成 →</button>
+            <button class="primary-btn" type="submit">
+              <span>生成卡片</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round">
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+                <polyline points="12 5 19 12 12 19"></polyline>
+              </svg>
+            </button>
           </div>
         </form>
         <div class="status hidden" id="status"></div>
@@ -55,75 +73,59 @@
           <span class="chip" id="platform-chip">未检测</span>
         </div>
 
-        <div class="style-panel-inline">
-          <div class="field-mini">
-            <label>强调色</label>
-            <input id="accent-color" type="color" value="#0fbfba" />
+        <div class="controls-panel">
+          <div class="control-group">
+            <label>主题色</label>
+            <div class="color-options" id="color-options">
+              <!-- Colors will be injected by JS or defined here -->
+              <button type="button" class="color-swatch active" style="--bg: #0fbfba" data-color="#0fbfba"
+                aria-label="Teal"></button>
+              <button type="button" class="color-swatch" style="--bg: #3b82f6" data-color="#3b82f6"
+                aria-label="Blue"></button>
+              <button type="button" class="color-swatch" style="--bg: #8b5cf6" data-color="#8b5cf6"
+                aria-label="Purple"></button>
+              <button type="button" class="color-swatch" style="--bg: #f43f5e" data-color="#f43f5e"
+                aria-label="Rose"></button>
+              <button type="button" class="color-swatch" style="--bg: #f97316" data-color="#f97316"
+                aria-label="Orange"></button>
+            </div>
           </div>
-          <div class="field-mini">
-            <label>密度</label>
-            <select id="density">
-              <option value="normal">舒适</option>
-              <option value="compact">紧凑</option>
-            </select>
-          </div>
-          <div class="field-mini">
-            <label>重点</label>
-            <select id="show-highlights">
-              <option value="show">显示</option>
-              <option value="hide">隐藏</option>
-            </select>
+
+
+          <div class="control-group-row">
+            <div class="control-item">
+              <label for="layout-mode">卡片布局</label>
+              <div class="select-wrapper">
+                <select id="layout-mode">
+                  <option value="standard">标准 (Standard)</option>
+                  <option value="quote">金句 (Quote)</option>
+                  <option value="minimal">极简 (Minimal)</option>
+                </select>
+              </div>
+            </div>
+            <div class="control-item">
+              <label for="density">排版密度</label>
+              <div class="select-wrapper">
+                <select id="density">
+                  <option value="normal">舒适 (默认)</option>
+                  <option value="compact">紧凑模式</option>
+                </select>
+              </div>
+            </div>
+            <div class="control-item">
+              <label for="show-highlights">高亮重点</label>
+              <div class="select-wrapper">
+                <select id="show-highlights">
+                  <option value="show">显示</option>
+                  <option value="hide">隐藏</option>
+                </select>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div class="card-gallery">
-          <article class="content-card variant-nebula is-selected" data-card="nebula">
-            <div class="variant-label">Nebula</div>
-            <div class="card-header">
-              <span class="platform" data-role="platform">YouTube</span>
-              <span class="time" data-role="length">--</span>
-            </div>
-            <h3 data-role="title">请先输入链接生成内容</h3>
-            <p class="summary" data-role="summary">我们会解析链接内容，提取重点信息，并以易读结构呈现。</p>
-            <div class="highlights" data-role="highlights"></div>
-            <div class="meta">
-              <span data-role="source">Powered by MagicCard</span>
-              <span data-role="confidence">置信度：--</span>
-            </div>
-            <button class="download-btn" type="button" data-download>Download</button>
-          </article>
-
-          <article class="content-card variant-circuit" data-card="circuit">
-            <div class="variant-label">Circuit</div>
-            <div class="card-header">
-              <span class="platform" data-role="platform">YouTube</span>
-              <span class="time" data-role="length">--</span>
-            </div>
-            <h3 data-role="title">请先输入链接生成内容</h3>
-            <p class="summary" data-role="summary">我们会解析链接内容，提取重点信息，并以易读结构呈现。</p>
-            <div class="highlights" data-role="highlights"></div>
-            <div class="meta">
-              <span data-role="source">Powered by MagicCard</span>
-              <span data-role="confidence">置信度：--</span>
-            </div>
-            <button class="download-btn" type="button" data-download>Download</button>
-          </article>
-
-          <article class="content-card variant-prism" data-card="prism">
-            <div class="variant-label">Prism</div>
-            <div class="card-header">
-              <span class="platform" data-role="platform">YouTube</span>
-              <span class="time" data-role="length">--</span>
-            </div>
-            <h3 data-role="title">请先输入链接生成内容</h3>
-            <p class="summary" data-role="summary">我们会解析链接内容，提取重点信息，并以易读结构呈现。</p>
-            <div class="highlights" data-role="highlights"></div>
-            <div class="meta">
-              <span data-role="source">Powered by MagicCard</span>
-              <span data-role="confidence">置信度：--</span>
-            </div>
-            <button class="download-btn" type="button" data-download>Download</button>
-          </article>
+        <div class="card-gallery" id="card-gallery">
+          <!-- Cards will be generated by JavaScript -->
         </div>
       </section>
     </main>

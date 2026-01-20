@@ -70,14 +70,59 @@ body {
   gap: 20px;
   align-items: center;
   text-align: center;
+  padding: 20px 0;
 }
 
-h1 {
+.hero-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.hero-title {
   font-family: "Space Grotesk", sans-serif;
-  font-size: clamp(36px, 4vw, 52px);
-  line-height: 1.05;
-  display: grid;
-  gap: 6px;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.hero-subtitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--text);
+  padding: 4px 10px;
+  border-radius: 99px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transform: translateY(-1px);
+}
+
+.hero-desc {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.input-form {
+  width: min(640px, 100%);
+  position: relative;
+  z-index: 10;
+}
+
+/* Add a subtle glow behind the input form */
+.input-form::before {
+  content: "";
+  position: absolute;
+  inset: -20px;
+  background: radial-gradient(circle, rgba(15, 191, 186, 0.15) 0%, transparent 70%);
+  z-index: -1;
+  pointer-events: none;
 }
 
 .input-form {
@@ -94,51 +139,69 @@ h1 {
 .input-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 16px 18px;
-  border-radius: 16px;
+  gap: 12px;
+  padding: 8px 12px 8px 18px;
+  border-radius: 100px;
+  /* Pillow shape */
   background: #fff;
-  border: 1px solid rgba(11, 18, 32, 0.12);
-  box-shadow: 0 10px 24px rgba(7, 15, 30, 0.08);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  border: 1px solid rgba(11, 18, 32, 0.08);
+  box-shadow: 0 16px 40px -10px rgba(11, 18, 32, 0.1);
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+  height: 64px;
 }
 
 .input-row:focus-within {
-  border-color: rgba(15, 191, 186, 0.6);
-  box-shadow: 0 0 0 4px rgba(15, 191, 186, 0.14);
+  border-color: rgba(15, 191, 186, 0.5);
+  box-shadow: 0 20px 50px -10px rgba(15, 191, 186, 0.2);
+  transform: translateY(-2px);
 }
 
 .input-icon {
-  font-size: 18px;
-  color: #3f475e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
 }
 
 input[type="url"] {
   border: none;
   outline: none;
-  font-size: 17px;
+  font-size: 16px;
   width: 100%;
+  color: var(--text);
+  background: transparent;
+}
+
+input[type="url"]::placeholder {
+  color: #94a3b8;
 }
 
 button {
   border: none;
-  border-radius: 14px;
-  padding: 14px 22px;
-  background: linear-gradient(135deg, var(--primary), #30d8d2);
+  border-radius: 99px;
+  padding: 0 28px;
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--text);
+  /* Black button for high contrast */
   color: #fff;
   font-weight: 600;
+  font-size: 15px;
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  box-shadow: 0 10px 20px rgba(15, 191, 186, 0.3);
+  transition: all 0.2s ease;
 }
 
 button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 16px 24px rgba(15, 191, 186, 0.35);
+  transform: translateY(-1px);
+  background: #000;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
 }
 
 .primary-btn {
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .status {
@@ -220,32 +283,133 @@ button:hover {
   border: 1px solid rgba(15, 191, 186, 0.2);
 }
 
-.style-panel-inline {
+.controls-panel {
   display: flex;
-  gap: 16px;
-  padding: 0;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px;
+  background: #fff;
+  border-radius: 20px;
+  border: 1px solid rgba(11, 18, 32, 0.06);
 }
 
-.field-mini {
+.control-group {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.control-group label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.color-options {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.color-swatch {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 4px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.3, 0, 0.2, 1);
+  position: relative;
+}
+
+.color-swatch:hover {
+  transform: scale(1.1);
+  background: var(--bg);
+  /* Override default button hover */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.color-swatch.active {
+  transform: scale(1);
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px #fff;
+}
+
+.color-swatch.active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.control-group-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(11, 18, 32, 0.06);
+}
+
+.control-item {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 
-.field-mini label {
+.control-item label {
   font-size: 12px;
-  margin: 0;
-  color: #3f475e;
-  white-space: nowrap;
+  font-weight: 600;
+  color: var(--muted);
 }
 
-.field-mini select,
-.field-mini input[type="color"] {
-  padding: 6px 10px;
+.select-wrapper {
+  position: relative;
+}
+
+.select-wrapper::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 6px;
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%235A647A' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+
+select {
+  width: 100%;
+  appearance: none;
+  background: #f8fafc;
+  border: 1px solid rgba(11, 18, 32, 0.08);
   border-radius: 10px;
-  border: 1px solid rgba(11, 18, 32, 0.12);
-  background: #fff;
+  padding: 10px 32px 10px 12px;
+  font-size: 14px;
+  color: var(--text);
+  font-family: inherit;
   cursor: pointer;
+  transition: all 0.2s;
+}
+
+select:hover {
+  background: #f1f5f9;
+  border-color: rgba(11, 18, 32, 0.15);
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(15, 191, 186, 0.1);
 }
 
 .card-gallery {
@@ -438,6 +602,7 @@ button:hover {
 }
 
 @keyframes pulse {
+
   0%,
   100% {
     opacity: 1;

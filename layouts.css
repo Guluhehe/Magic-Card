@@ -1,0 +1,86 @@
+/* =========================================
+   Layout: Quote
+   ========================================= */
+.content-card.layout-quote {
+    gap: 24px;
+    text-align: center;
+}
+
+.layout-quote .card-header {
+    justify-content: center;
+    opacity: 0.6;
+}
+
+.layout-quote .summary {
+    font-size: 24px;
+    font-weight: 500;
+    line-height: 1.4;
+    font-family: "Space Grotesk", sans-serif;
+    position: relative;
+    padding: 0 10px;
+}
+
+.layout-quote .summary::before {
+    content: "“";
+    font-size: 60px;
+    position: absolute;
+    top: -20px;
+    left: -10px;
+    opacity: 0.2;
+    font-family: serif;
+}
+
+.layout-quote h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+    order: 4;
+    /* Move title to bottom */
+}
+
+.layout-quote .highlights {
+    display: none;
+}
+
+.layout-quote .meta {
+    justify-content: center;
+    border: none;
+    padding-top: 0;
+}
+
+/* =========================================
+   Layout: Minimal
+   ========================================= */
+.content-card.layout-minimal {
+    background: #fff !important;
+    /* Force white bg */
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.04);
+}
+
+.layout-minimal .variant-label {
+    display: none;
+}
+
+.layout-minimal .card-header {
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 12px;
+    margin-bottom: 8px;
+}
+
+.layout-minimal h3 {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.layout-minimal .highlight {
+    background: transparent;
+    border: none;
+    border-left: 3px solid var(--accent);
+    border-radius: 0;
+    padding: 4px 12px;
+}
+
+.layout-minimal .meta {
+    display: none;
+}

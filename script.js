@@ -1,25 +1,31 @@
 const form = document.getElementById("parser-form");
 const urlInput = document.getElementById("url-input");
-const status = document.getElementById("status");
+const statusDOM = document.getElementById("status");
 const platformChip = document.getElementById("platform-chip");
-const cards = Array.from(document.querySelectorAll(".content-card[data-card]"));
-let activeCard = cards[0];
-const accentColor = document.getElementById("accent-color");
-const density = document.getElementById("density");
-const showHighlights = document.getElementById("show-highlights");
-const outputPanel = document.getElementById("output-panel"); // New
-const downloadButtons = Array.from(document.querySelectorAll("[data-download]"));
-const quickActions = document.querySelectorAll(".sample-link");
-const setStatus = (message, color, visible = true) => {
-  status.textContent = message || "";
-  if (color) {
-    status.style.color = color;
+const outputPanel = document.getElementById("output-panel");
+const galleryContainer = document.getElementById("card-gallery");
+
+// Controls
+const colorSwatches = document.querySelectorAll(".color-swatch");
+const densitySelect = document.getElementById("density");
+const highlightsSelect = document.getElementById("show-highlights");
+const layoutSelect = document.getElementById("layout-mode");
+const downloadButtons = []; // Will be populated dynamically
+
+// State
+let appState = {
+  data: null,
+  config: {
+    accent: "#0fbfba",
+    density: "normal",
+    highlights: "show", // show | hide
+    layout: "standard", // standard | quote | minimal
+    themes: ["nebula", "circuit", "prism"]
   }
-  status.classList.toggle("hidden", !visible);
 };
 
 const twitterLogoSvg = `
-  <svg class="platform-logo" viewBox="0 0 24 24" role="img" aria-label="Twitter">
+  <svg class="platform-logo" viewBox="0 0 24 24" role="img" aria-label="Twitter" style="width:16px;height:16px;display:inline-block;vertical-align:middle;">
     <path fill="currentColor" d="M23.954 4.569c-.885.389-1.83.654-2.825.775 1.014-.611 1.794-1.574 2.163-2.723-.951.555-2.005.959-3.127 1.184-.897-.94-2.178-1.528-3.594-1.528-3.179 0-5.515 2.966-4.797 6.045-4.091-.205-7.719-2.165-10.148-5.144-1.29 2.213-.669 5.108 1.523 6.574-.806-.026-1.566-.247-2.229-.616-.054 2.281 1.581 4.415 3.949 4.89-.693.188-1.452.232-2.224.084.626 1.956 2.444 3.379 4.6 3.419-2.07 1.623-4.678 2.348-7.29 2.04 2.179 1.394 4.768 2.209 7.557 2.209 9.142 0 14.307-7.721 13.995-14.646.962-.695 1.797-1.562 2.457-2.549z"/>
   </svg>
 `;
@@ -29,284 +35,263 @@ const sampleUrls = {
   twitter: "https://x.com/OpenAI/status/1790432049117327631",
 };
 
-const buildHighlights = (container, items) => {
-  container.innerHTML = "";
-  const safeItems = Array.isArray(items) ? items : [];
-  if (!safeItems.length) {
-    container.dataset.empty = "true";
-    return;
+// --- Utils ---
+
+const setStatus = (message, color, visible = true) => {
+  statusDOM.textContent = message || "";
+  if (color) {
+    statusDOM.style.color = color;
   }
-  container.dataset.empty = "false";
-  safeItems.forEach((item) => {
-    const wrapper = document.createElement("div");
-    wrapper.className = "highlight";
-    const label = document.createElement("span");
-    label.textContent = item.label;
-    const text = document.createElement("div");
-    text.textContent = item.text;
-    wrapper.append(label, text);
-    container.appendChild(wrapper);
+  statusDOM.classList.toggle("hidden", !visible);
+};
+
+const getApiBase = () => {
+  const metaBase = document.querySelector('meta[name="magiccard-api-base"]')?.getAttribute("content")?.trim();
+  const windowBase = (window.MAGICCARD_API_BASE || "").trim();
+  if (windowBase) return windowBase;
+  if (metaBase) return metaBase;
+  const host = window.location.hostname;
+  return (host === "localhost" || host === "127.0.0.1") ? "http://127.0.0.1:5000" : "";
+};
+
+// --- Rendering Logic ---
+
+const createHighlightHTML = (items) => {
+  if (!items || items.length === 0) return "";
+  return items.map(item => `
+    <div class="highlight">
+      <span>${item.label}</span>
+      <div>${item.text}</div>
+    </div>
+  `).join("");
+};
+
+const renderCard = (theme, data) => {
+  const { config } = appState;
+  const isTwitter = data.platform === "Twitter";
+  const lengthDisplay = isTwitter ? twitterLogoSvg : (data.length || "--");
+
+  const card = document.createElement("article");
+  card.className = `content-card variant-${theme} layout-${config.layout}`;
+  if (config.density === "compact") card.classList.add("compact");
+
+  // Set accent color
+  card.style.setProperty("--accent", config.accent);
+
+  // Conditionally render parts based on Layout
+  let contentHTML = "";
+
+  // Common Elements
+  const headerHTML = `
+    <div class="card-header">
+      <span class="platform">${data.platform}</span>
+      <span class="time">${lengthDisplay}</span>
+    </div>
+  `;
+
+  const titleHTML = `<h3>${data.title || "生成中..."}</h3>`;
+  const summaryHTML = `<p class="summary">${data.summary || "正在解析内容..."}</p>`;
+
+  const highlightsContent = createHighlightHTML(data.highlights);
+  const showHighlights = config.highlights === "show" && highlightsContent;
+  const highlightsHTML = showHighlights
+    ? `<div class="highlights">${highlightsContent}</div>`
+    : `<div class="highlights hidden"></div>`;
+
+  const metaHTML = `
+    <div class="meta">
+      <span>Powered by MagicCard</span>
+      <span>置信度：${data.confidence || "--"}</span>
+    </div>
+  `;
+
+  const downloadBtnHTML = `<button class="download-btn" type="button">Download ${theme}</button>`;
+
+  // Assemble based on Layout
+  // Currently, we use CSS to reorder, so DOM order can stay mostly consistent.
+  // However, for "Quote" layout, we might want to swap summary and title if we were doing it purely in DOM,
+  // but CSS Flexbox `order` is often enough. 
+  // Let's stick to a standard DOM and let CSS handle the display variations.
+
+  contentHTML = `
+    <div class="variant-label">${theme}</div>
+    ${headerHTML}
+    ${titleHTML}
+    ${summaryHTML}
+    ${highlightsHTML}
+    ${metaHTML}
+    ${downloadBtnHTML}
+  `;
+
+  card.innerHTML = contentHTML;
+
+  // Attach Event Listeners
+  const btn = card.querySelector(".download-btn");
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    downloadCard(card, btn);
   });
+
+  card.addEventListener("click", () => {
+    document.querySelectorAll(".content-card").forEach(c => c.classList.remove("is-selected"));
+    card.classList.add("is-selected");
+  });
+
+  return card;
+};
+
+const renderGallery = () => {
+  galleryContainer.innerHTML = "";
+
+  // If no data, render placeholder state (optional, or just keep the empty state handled by initial HTML if we hadn't cleared it)
+  // But here we want to render specifically *with* the current configuration.
+
+  const dummyData = {
+    platform: "Twitter",
+    length: null,
+    title: "示例：AI 正在重塑软件开发的工作流",
+    summary: "在这个新时代，每一个开发者的生产力都将被无限放大。我们不再是代码的搬运工，而是逻辑的编排者。",
+    highlights: [
+      { label: "观点", text: "AI Copilot 已经成为标配" },
+      { label: "趋势", text: "自然语言编程正在兴起" }
+    ],
+    confidence: "98%"
+  };
+
+  const dataToRender = appState.data || dummyData;
+
+  appState.config.themes.forEach(theme => {
+    const cardNode = renderCard(theme, dataToRender);
+    galleryContainer.appendChild(cardNode);
+  });
+};
+
+// --- Actions ---
+
+const requestAiSummary = async ({ url, platform, id }) => {
+  const apiBase = getApiBase();
+  const res = await fetch(`${apiBase}/api/magic`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, platform, id }),
+  });
+  if (!res.ok) throw new Error((await res.json()).message || "api-error");
+  return res.json();
 };
 
 const parseUrl = (input) => {
   const trimmed = input.trim();
   if (!trimmed) return null;
-
   try {
     const url = new URL(trimmed);
     const host = url.hostname.toLowerCase();
-
-    // YouTube
     if (host.includes("youtube.com") || host.includes("youtu.be")) {
-      let id = "";
-      if (host.includes("youtu.be")) {
-        id = url.pathname.slice(1);
-      } else if (url.pathname.includes("/shorts/")) {
-        id = url.pathname.split("/").pop();
-      } else {
-        id = url.searchParams.get("v");
-      }
-      return { platform: "YouTube", id };
+      return { platform: "YouTube", id: "video" }; // ID logic simplified for checking
     }
-
-    // Twitter / X
     if (host.includes("twitter.com") || host.includes("x.com")) {
-      const segments = url.pathname.split("/").filter(Boolean);
-      const id = segments[segments.length - 1];
-      return { platform: "Twitter", id };
+      return { platform: "Twitter", id: "tweet" };
     }
-  } catch (e) {
-    return null;
-  }
+  } catch (e) { return null; }
   return null;
 };
 
-const updateCard = ({ platform }, detail = {}) => {
-  if (!detail) return;
-
-  platformChip.textContent = platform;
-  cards.forEach((card) => {
-    const platformEl = card.querySelector('[data-role="platform"]');
-    const lengthEl = card.querySelector('[data-role="length"]');
-    const titleEl = card.querySelector('[data-role="title"]');
-    const summaryEl = card.querySelector('[data-role="summary"]');
-    const highlightsEl = card.querySelector('[data-role="highlights"]');
-    const sourceEl = card.querySelector('[data-role="source"]');
-    const confidenceEl = card.querySelector('[data-role="confidence"]');
-
-    if (!platformEl || !lengthEl || !titleEl || !summaryEl || !highlightsEl || !sourceEl || !confidenceEl) {
-      return;
-    }
-
-    platformEl.textContent = platform;
-    if (platform === "Twitter") {
-      lengthEl.innerHTML = twitterLogoSvg;
-      lengthEl.classList.add("is-logo");
-      lengthEl.setAttribute("aria-label", "Twitter");
-    } else {
-      lengthEl.textContent = detail.length || "--";
-      lengthEl.classList.remove("is-logo");
-      lengthEl.removeAttribute("aria-label");
-    }
-
-    titleEl.textContent = detail.title || "抓取结果";
-    summaryEl.textContent = detail.summary || "暂无摘要信息。";
-    sourceEl.textContent = "Powered by MagicCard";
-    confidenceEl.textContent = `置信度：${detail.confidence || "92%"}`;
-    buildHighlights(highlightsEl, detail.highlights || []);
-
-    card.style.animation = "none";
-    card.offsetHeight;
-    card.style.animation = null;
-  });
-};
-
-const getApiBase = () => {
-  const metaBase = document
-    .querySelector('meta[name="magiccard-api-base"]')
-    ?.getAttribute("content")
-    ?.trim();
-  const windowBase = (window.MAGICCARD_API_BASE || "").trim();
-  if (windowBase) return windowBase;
-  if (metaBase) return metaBase;
-
-  // Check if running locally
-  const host = window.location.hostname;
-  const protocol = window.location.protocol;
-  const isLocal =
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    protocol === "file:";
-
-  // Use local backend for development, Render for production
-  return isLocal ? "http://127.0.0.1:5000" : "";
-};
-
-const requestAiSummary = async ({ url, platform, id }) => {
-  const apiBase = getApiBase();
-  const response = await fetch(`${apiBase}/api/magic`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      url,
-      platform,
-      id,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.message || "api-request-failed");
-  }
-
-  return response.json();
-};
-
-const applyCardStyles = () => {
-  const chosenAccent = accentColor.value;
-  const densityValue = density.value;
-  const highlightMode = showHighlights.value;
-
-  cards.forEach((card) => {
-    const highlightsEl = card.querySelector('[data-role="highlights"]');
-    if (!highlightsEl) return;
-    const isEmpty = highlightsEl.dataset.empty === "true";
-    card.style.setProperty("--accent", chosenAccent);
-    card.classList.toggle("compact", densityValue === "compact");
-    highlightsEl.classList.toggle("hidden", highlightMode === "hide" || isEmpty);
-  });
-};
-
-const downloadCard = async (card, triggerButton) => {
-  if (!outputPanel.classList.contains("visible")) {
-    status.textContent = "请先生成卡片再下载。";
-    status.style.color = "#ef4444";
-    return;
-  }
-  if (typeof htmlToImage === "undefined") {
-    status.textContent = "下载组件未加载，请刷新页面再试。";
-    status.style.color = "#ef4444";
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  const meta = parseUrl(urlInput.value);
+  if (!meta) {
+    setStatus("不支持的链接", "#ef4444");
     return;
   }
 
-  if (triggerButton) {
-    triggerButton.disabled = true;
-  }
-  const captureTarget = card || activeCard || cards[0];
-  if (!captureTarget) {
-    status.textContent = "未找到可下载的卡片。";
-    status.style.color = "#ef4444";
-    if (triggerButton) {
-      triggerButton.disabled = false;
-    }
-    return;
-  }
-  captureTarget.classList.add("is-capturing");
-  try {
-    if (document.fonts && document.fonts.ready) {
-      await document.fonts.ready;
-    }
-    const pixelRatio = Math.min(4, Math.max(2, window.devicePixelRatio * 2));
-    const blob = await htmlToImage.toBlob(captureTarget, {
-      backgroundColor: null,
-      cacheBust: true,
-      pixelRatio,
-    });
-    if (!blob) {
-      throw new Error("download-blob-empty");
-    }
-    const link = document.createElement("a");
-    const objectUrl = URL.createObjectURL(blob);
-    link.href = objectUrl;
-    link.download = "magiccard.png";
-    link.click();
-    URL.revokeObjectURL(objectUrl);
-  } catch (error) {
-    console.error(error);
-    status.textContent = "⚠️ 下载失败，请重试。";
-    status.style.color = "#ef4444";
-  } finally {
-    captureTarget.classList.remove("is-capturing");
-    if (triggerButton) {
-      triggerButton.disabled = false;
-    }
-  }
-};
+  setStatus("正在解析...", "var(--primary)");
 
-const handleSubmit = async (event) => {
-  event.preventDefault();
-  const data = parseUrl(urlInput.value);
-  if (!data || !data.id) {
-    setStatus("暂不支持的链接，请输入有效的 YouTube 或 Twitter/X 链接。", "#ef4444");
-    downloadButtons.forEach((button) => {
-      button.disabled = true;
-    });
-    return;
-  }
-
-  setStatus("正在解析链接…", "var(--primary)");
+  // Show gallery immediately with loading state (or dummy data)
+  // For now we keep using dummy data or previous data? 
+  // Let's reset data to null to show "loading" effect if we had a skeleton.
+  // appState.data = null; 
+  // renderGallery();
 
   try {
     const result = await requestAiSummary({
       url: urlInput.value,
-      platform: data.platform,
-      id: data.id,
+      platform: meta.platform,
+      id: meta.id
     });
-    updateCard(data, result);
-    applyCardStyles();
-    setStatus("卡片已生成。", "#087c78");
+
+    appState.data = {
+      platform: meta.platform,
+      ...result
+    };
+
+    renderGallery();
+    setStatus("生成成功", "#087c78");
     outputPanel.classList.remove("hidden");
     outputPanel.classList.add("visible");
-    outputPanel.scrollIntoView({ behavior: "smooth", block: "start" });
-    downloadButtons.forEach((button) => {
-      button.disabled = false;
-    });
-  } catch (error) {
-    console.error(error);
-    setStatus(`暂时无法获取完整内容，已生成基础卡片。`, "#ef4444");
-    outputPanel.classList.add("hidden");
-    outputPanel.classList.remove("visible");
-    downloadButtons.forEach((button) => {
-      button.disabled = true;
-    });
+    outputPanel.scrollIntoView({ behavior: "smooth" });
+
+  } catch (err) {
+    console.error(err);
+    setStatus("生成失败", "#ef4444");
   }
 };
 
+const downloadCard = async (card, btn) => {
+  if (typeof htmlToImage === "undefined") return;
+  btn.disabled = true;
+  card.classList.add("is-capturing");
+  try {
+    const blob = await htmlToImage.toBlob(card, { pixelRatio: 3 });
+    const link = document.createElement("a");
+    link.download = `magic-card-${Date.now()}.png`;
+    link.href = URL.createObjectURL(blob);
+    link.click();
+  } catch (e) {
+    console.error(e);
+    alert("下载失败");
+  } finally {
+    card.classList.remove("is-capturing");
+    btn.disabled = false;
+  }
+};
+
+// --- Init Listeners ---
+
 form.addEventListener("submit", handleSubmit);
-accentColor.addEventListener("input", applyCardStyles);
-density.addEventListener("change", applyCardStyles);
-showHighlights.addEventListener("change", applyCardStyles);
-downloadButtons.forEach((button) => {
-  button.addEventListener("click", (event) => {
-    event.stopPropagation();
-    const card = button.closest(".content-card");
-    downloadCard(card, button);
+
+// Color Swatches
+colorSwatches.forEach(swatch => {
+  swatch.addEventListener("click", () => {
+    colorSwatches.forEach(s => s.classList.remove("active"));
+    swatch.classList.add("active");
+    appState.config.accent = swatch.dataset.color;
+    renderGallery();
   });
 });
 
-if (cards.length) {
-  cards.forEach((card) => {
-    card.addEventListener("click", () => {
-      cards.forEach((item) => item.classList.toggle("is-selected", item === card));
-      activeCard = card;
-    });
-  });
-}
+// Selects
+densitySelect.addEventListener("change", (e) => {
+  appState.config.density = e.target.value;
+  renderGallery();
+});
 
-quickActions.forEach((button) => {
-  button.addEventListener("click", () => {
-    const sampleType = button.dataset.sample;
-    urlInput.value = sampleUrls[sampleType];
-    status.textContent = "示例链接已填入，可直接生成卡片。";
-    setStatus("示例链接已填入，可直接生成卡片。", "#087c78");
+highlightsSelect.addEventListener("change", (e) => {
+  appState.config.highlights = e.target.value;
+  renderGallery();
+});
+
+layoutSelect.addEventListener("change", (e) => {
+  appState.config.layout = e.target.value;
+  renderGallery();
+});
+
+// Quick Actions
+document.querySelectorAll(".sample-link").forEach(btn => {
+  btn.addEventListener("click", () => {
+    urlInput.value = sampleUrls[btn.dataset.sample];
+    setStatus("示例已填入", "#087c78");
   });
 });
 
-applyCardStyles();
-downloadButtons.forEach((button) => {
-  button.disabled = true;
-});
+// Init
+renderGallery();
 setStatus("", "", false);
