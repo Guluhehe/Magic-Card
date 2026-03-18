@@ -3,13 +3,15 @@ import html
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote, urlparse
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from youtube_transcript_api import YouTubeTranscriptApi
 import requests
 
 # Load environment variables from .env file if available
@@ -114,6 +116,24 @@ def summarize_text(text, limit=500):
 
 def is_debug_enabled():
     return os.getenv("TRANSCRIPT_DEBUG", "").lower() in ("1", "true", "yes")
+
+
+def is_truthy_env(name, default=""):
+    return os.getenv(name, default).lower() in ("1", "true", "yes")
+
+
+def is_youtube_poc_mode():
+    return is_truthy_env("YOUTUBE_POC_MODE", "0")
+
+
+def parse_cookies_from_browser_option(raw_value=None):
+    value = (raw_value if raw_value is not None else os.getenv("YOUTUBE_COOKIES_FROM_BROWSER", "")).strip()
+    if not value:
+        return None
+    parts = [item.strip() for item in value.split(":") if item.strip()]
+    if not parts:
+        return None
+    return tuple(parts)
 
 
 def get_preferred_transcript_languages():
@@ -442,61 +462,59 @@ def fetch_youtube_transcript_lemnos(video_id, languages):
 
 def fetch_youtube_transcript(video_id):
     """
-    获取 YouTube 字幕 - 完全不依赖 youtube-transcript-api
-    优先使用最快、最稳定的方法，适配 Vercel 环境
+    获取 YouTube 字幕 — 并发优先，快速失败
+    Phase 1: Player + Lemnos 并发（8s deadline）
+    Phase 2: TimedText + Piped 串行（仅本地环境）
     """
     languages = get_preferred_transcript_languages()
     debug = is_debug_enabled()
     errors = []
-    
-    # 方法 1: Player API（最快、最稳定）
-    try:
-        return fetch_youtube_transcript_player(video_id, languages)
-    except Exception as exc:
-        errors.append(f"Player API: {exc}")
-        if debug:
-            print(f"[DEBUG] Player API failed: {exc}")
-    
-    # 方法 2: Lemnos API（第三方，但快）
-    try:
-        return fetch_youtube_transcript_lemnos(video_id, languages)
-    except Exception as exc:
-        errors.append(f"Lemnos API: {exc}")
-        if debug:
-            print(f"[DEBUG] Lemnos API failed: {exc}")
-    
-    # Vercel 环境：只尝试快速方法
+
+    # --- Phase 1: 快速并发（Player + Lemnos 同时发请求）---
+    fast_methods = {
+        "Player API": lambda: fetch_youtube_transcript_player(video_id, languages),
+        "Lemnos API": lambda: fetch_youtube_transcript_lemnos(video_id, languages),
+    }
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = {pool.submit(fn): name for name, fn in fast_methods.items()}
+        for future in as_completed(futures, timeout=8):
+            name = futures[future]
+            try:
+                result = future.result(timeout=0)
+                if result:
+                    if debug:
+                        print(f"[DEBUG] {name} succeeded")
+                    return result
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+                if debug:
+                    print(f"[DEBUG] {name} failed: {exc}")
+
+    # --- Vercel 环境到此为止 ---
     is_vercel = os.getenv("VERCEL") == "1"
     skip_slow = os.getenv("SKIP_SLOW_METHODS", "").lower() in ("1", "true", "yes")
-    
+
     if is_vercel or skip_slow:
-        # 在 Vercel 上放弃，避免超时
-        message = "字幕获取失败（快速模式），请确认视频有字幕"
-        if debug:
-            message = f"{message}。尝试的方法: {'; '.join(errors)}"
-        raise RuntimeError(message)
-    
-    # 方法 3: TimedText API（本地环境可以retry）
-    try:
-        return fetch_youtube_transcript_timedtext(video_id, languages)
-    except Exception as exc:
-        errors.append(f"TimedText API: {exc}")
-        if debug:
-            print(f"[DEBUG] TimedText API failed: {exc}")
-    
-    # 方法 4: Piped（最慢，本地环境最后尝试）
-    try:
-        return fetch_youtube_transcript_piped(video_id, languages)
-    except Exception as exc:
-        errors.append(f"Piped API: {exc}")
-        if debug:
-            print(f"[DEBUG] Piped API failed: {exc}")
-    
-    # 所有方法失败
-    message = "未能获取字幕，请确认视频有字幕"
-    if debug:
-        message = f"{message}。尝试的方法: {'; '.join(errors)}"
-    raise RuntimeError(message)
+        raise RuntimeError(f"字幕获取失败（快速模式）: {'; '.join(errors)}")
+
+    # --- Phase 2: 慢速方法（仅本地环境）---
+    slow_methods = [
+        ("TimedText API", lambda: fetch_youtube_transcript_timedtext(video_id, languages)),
+        ("Piped API", lambda: fetch_youtube_transcript_piped(video_id, languages)),
+    ]
+
+    for name, fn in slow_methods:
+        try:
+            result = fn()
+            if result:
+                return result
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            if debug:
+                print(f"[DEBUG] {name} failed: {exc}")
+
+    raise RuntimeError(f"未能获取字幕: {'; '.join(errors)}")
 
 
 def transcript_to_text(transcript_data):
@@ -729,7 +747,8 @@ def summarize_with_gemini(text, platform):
 
 
 def build_summary_with_fallback(text, platform):
-    llm_summary = summarize_with_gemini(text, platform) or summarize_with_openai(text, platform)
+    # 优先 OpenAI（更常见），再 Gemini
+    llm_summary = summarize_with_openai(text, platform) or summarize_with_gemini(text, platform)
     if llm_summary:
         return llm_summary, True
     cleaned = text.strip()
@@ -778,6 +797,145 @@ def transcribe_audio_with_openai(file_path):
     return getattr(result, "text", "") or ""
 
 
+def transcribe_audio_with_groq(file_path):
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError("未配置 GROQ_API_KEY，无法使用 Groq Whisper。")
+    base_url = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").rstrip("/")
+    model = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
+    endpoint = f"{base_url}/audio/transcriptions"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    with open(file_path, "rb") as audio_file:
+        response = requests.post(
+            endpoint,
+            headers=headers,
+            data={"model": model, "response_format": "json"},
+            files={"file": (os.path.basename(file_path), audio_file)},
+            timeout=120,
+        )
+    if not response.ok:
+        raise RuntimeError(f"Groq Whisper 请求失败: {response.status_code} {response.text[:200]}")
+    try:
+        payload = response.json()
+    except Exception as exc:
+        raise RuntimeError(f"Groq Whisper 响应解析失败: {exc}")
+    text = str(payload.get("text", "")).strip()
+    if not text:
+        raise RuntimeError("Groq Whisper 转写为空。")
+    return text
+
+
+def transcribe_audio_with_preferred_provider(file_path):
+    provider = os.getenv("WHISPER_PROVIDER", "auto").strip().lower()
+    errors = []
+    if provider in ("auto", "groq"):
+        groq_key = os.getenv("GROQ_API_KEY", "").strip()
+        if provider == "groq" or groq_key:
+            try:
+                return transcribe_audio_with_groq(file_path)
+            except Exception as exc:
+                errors.append(f"groq={exc}")
+                if provider == "groq":
+                    raise
+    if provider in ("auto", "openai"):
+        try:
+            return transcribe_audio_with_openai(file_path)
+        except Exception as exc:
+            errors.append(f"openai={exc}")
+            if provider == "openai":
+                raise
+    if provider not in ("auto", "groq", "openai"):
+        raise RuntimeError(f"不支持的 WHISPER_PROVIDER: {provider}")
+    raise RuntimeError("音频转写失败: " + "; ".join(errors))
+
+
+def apply_ytdlp_access_options(ydl_opts, tmp_dir):
+    clients = [c.strip() for c in os.getenv("YOUTUBE_DLP_CLIENTS", "").split(",") if c.strip()]
+    proxy = os.getenv("YOUTUBE_PROXY", "").strip()
+    cookies_b64 = os.getenv("YOUTUBE_COOKIES_B64", "").strip()
+    cookies_from_browser = parse_cookies_from_browser_option()
+    if clients:
+        ydl_opts["extractor_args"] = {"youtube": {"player_client": clients}}
+    if proxy:
+        ydl_opts["proxy"] = proxy
+    if cookies_from_browser:
+        ydl_opts["cookiesfrombrowser"] = cookies_from_browser
+        return
+    if cookies_b64:
+        try:
+            cookie_path = os.path.join(tmp_dir, "cookies.txt")
+            with open(cookie_path, "wb") as cookie_file:
+                cookie_file.write(base64.b64decode(cookies_b64))
+            ydl_opts["cookiefile"] = cookie_path
+        except Exception as exc:
+            raise RuntimeError(f"cookie decode failed: {exc}")
+
+
+def split_audio_with_ffmpeg(file_path, tmp_dir, chunk_limit_bytes):
+    if chunk_limit_bytes <= 0:
+        return [file_path]
+    file_size = os.path.getsize(file_path)
+    if file_size <= chunk_limit_bytes:
+        return [file_path]
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError("音频超过分段阈值，但 ffmpeg 不可用。")
+
+    chunk_count = max(2, int((file_size + chunk_limit_bytes - 1) / chunk_limit_bytes))
+    segment_time = 600
+    if shutil.which("ffprobe"):
+        probe_cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            file_path,
+        ]
+        try:
+            duration = float(subprocess.check_output(probe_cmd, text=True, timeout=10).strip())
+            if duration > 0:
+                segment_time = max(120, int(duration / chunk_count) + 1)
+        except Exception:
+            pass
+
+    segment_dir = os.path.join(tmp_dir, "segments")
+    os.makedirs(segment_dir, exist_ok=True)
+    ext = os.path.splitext(file_path)[1] or ".m4a"
+    pattern = os.path.join(segment_dir, f"part_%03d{ext}")
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        file_path,
+        "-f",
+        "segment",
+        "-segment_time",
+        str(segment_time),
+        "-c",
+        "copy",
+        pattern,
+    ]
+    try:
+        subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True, timeout=120)
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        raise RuntimeError(f"ffmpeg 分段失败: {stderr[:200]}")
+
+    segments = [
+        os.path.join(segment_dir, name)
+        for name in sorted(os.listdir(segment_dir))
+        if name.endswith(ext)
+    ]
+    if not segments:
+        raise RuntimeError("ffmpeg 分段完成但未生成切片文件。")
+    return segments
+
+
 def transcribe_youtube_audio(video_url):
     try:
         from yt_dlp import YoutubeDL
@@ -788,6 +946,11 @@ def transcribe_youtube_audio(video_url):
     max_bytes = None
     if max_mb and max_mb.isdigit():
         max_bytes = int(max_mb) * 1024 * 1024
+
+    segment_mb = os.getenv("YOUTUBE_AUDIO_SEGMENT_MB", "25")
+    chunk_limit_bytes = 25 * 1024 * 1024
+    if segment_mb.isdigit():
+        chunk_limit_bytes = int(segment_mb) * 1024 * 1024
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         output_template = os.path.join(tmp_dir, "%(id)s.%(ext)s")
@@ -801,6 +964,7 @@ def transcribe_youtube_audio(video_url):
         }
         if max_bytes:
             ydl_opts["max_filesize"] = max_bytes
+        apply_ytdlp_access_options(ydl_opts, tmp_dir)
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=True)
             file_path = ydl.prepare_filename(info)
@@ -810,8 +974,14 @@ def transcribe_youtube_audio(video_url):
                 )
         if not os.path.exists(file_path):
             raise RuntimeError("下载音频失败，未找到输出文件。")
-        transcript = transcribe_audio_with_openai(file_path)
-        if not transcript.strip():
+        file_list = split_audio_with_ffmpeg(file_path, tmp_dir, chunk_limit_bytes)
+        parts = []
+        for part in file_list:
+            text = transcribe_audio_with_preferred_provider(part).strip()
+            if text:
+                parts.append(text)
+        transcript = "\n".join(parts).strip()
+        if not transcript:
             raise RuntimeError("音频转写结果为空。")
         return transcript
 
@@ -823,20 +993,8 @@ def fetch_youtube_subtitles_ytdlp(video_url):
         raise RuntimeError("yt-dlp 未安装，无法下载字幕。")
 
     languages = get_preferred_transcript_languages()
-    clients = [c.strip() for c in os.getenv("YOUTUBE_DLP_CLIENTS", "").split(",") if c.strip()]
-    proxy = os.getenv("YOUTUBE_PROXY", "").strip()
-    cookies_b64 = os.getenv("YOUTUBE_COOKIES_B64", "").strip()
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        cookie_path = None
-        if cookies_b64:
-            try:
-                cookie_path = os.path.join(tmp_dir, "cookies.txt")
-                with open(cookie_path, "wb") as cookie_file:
-                    cookie_file.write(base64.b64decode(cookies_b64))
-            except Exception as exc:
-                raise RuntimeError(f"cookie decode failed: {exc}")
-
         ydl_opts = {
             "skip_download": True,
             "quiet": True,
@@ -847,12 +1005,7 @@ def fetch_youtube_subtitles_ytdlp(video_url):
             "outtmpl": os.path.join(tmp_dir, "%(id)s.%(ext)s"),
             "socket_timeout": 10,
         }
-        if clients:
-            ydl_opts["extractor_args"] = {"youtube": {"player_client": clients}}
-        if proxy:
-            ydl_opts["proxy"] = proxy
-        if cookie_path:
-            ydl_opts["cookiefile"] = cookie_path
+        apply_ytdlp_access_options(ydl_opts, tmp_dir)
 
         with YoutubeDL(ydl_opts) as ydl:
             ydl.extract_info(video_url, download=True)
@@ -875,6 +1028,31 @@ def fetch_youtube_subtitles_ytdlp(video_url):
         if not transcript:
             raise RuntimeError("yt-dlp 字幕解析为空。")
         return transcript
+
+
+def fetch_youtube_content_poc(video_url, video_id):
+    _ = video_id
+    errors = {"subtitle_error": None, "audio_error": None}
+    try:
+        subtitle_data = fetch_youtube_subtitles_ytdlp(video_url)
+        full_text = transcript_to_text(subtitle_data).strip()
+        if full_text:
+            return full_text, "subtitle", errors
+        errors["subtitle_error"] = RuntimeError("subtitle-empty")
+    except Exception as exc:
+        errors["subtitle_error"] = exc
+
+    try:
+        full_text = transcribe_youtube_audio(video_url).strip()
+        if full_text:
+            return full_text, "audio", errors
+        errors["audio_error"] = RuntimeError("audio-empty")
+    except Exception as exc:
+        errors["audio_error"] = exc
+
+    raise RuntimeError(
+        f"YouTube PoC 两层链路失败: subtitle={errors['subtitle_error']}; audio={errors['audio_error']}"
+    )
 
 
 def fetch_twitter_via_fixtweet(tweet_id):
@@ -911,23 +1089,23 @@ def fetch_twitter_via_fixtweet(tweet_id):
 
 def fetch_twitter_text(url, cookie_map=None):
     """
-    多级降级策略抓取推文：
-    1. FixTweet API（最优先，免费稳定）
-    2. Syndication API（不稳定，作为降级）
-    3. snscrape（需额外安装）
-    4. Playwright（最后兜底，需浏览器内核）
+    推文抓取（精简版）：
+    1. FixTweet API（免费稳定）
+    2. Syndication API（降级）
     """
     tweet_id = extract_twitter_id(url)
     if not tweet_id:
         raise RuntimeError("invalid-twitter-url")
 
+    errors = []
+
     # 1. 优先：FixTweet API（推荐方案）
     try:
         return fetch_twitter_via_fixtweet(tweet_id)
-    except Exception:
-        pass
+    except Exception as exc:
+        errors.append(f"FixTweet: {exc}")
 
-    # 2. 降级：Syndication API（2024年已不稳定）
+    # 2. 降级：Syndication API
     syndication_url = (
         f"https://cdn.syndication.twimg.com/tweet-result?id={tweet_id}&lang=zh"
     )
@@ -939,7 +1117,7 @@ def fetch_twitter_text(url, cookie_map=None):
         )
     }
     try:
-        response = requests.get(syndication_url, headers=headers, timeout=12)
+        response = requests.get(syndication_url, headers=headers, timeout=8)
         if response.ok:
             data = response.json()
             text = data.get("text") or data.get("full_text") or data.get("raw_text")
@@ -949,69 +1127,41 @@ def fetch_twitter_text(url, cookie_map=None):
                 screen_name = user.get("screen_name") or ""
                 title = f"{display_name} @{screen_name}".strip()
                 return title, text, "syndication"
-    except Exception:
-        pass
+        errors.append(f"Syndication: HTTP {response.status_code}")
+    except Exception as exc:
+        errors.append(f"Syndication: {exc}")
 
-    # 3. 降级：snscrape（需额外安装 snscrape 库）
-    try:
-        import snscrape.modules.twitter as sntwitter
-        scraper = sntwitter.TwitterTweetScraper(tweet_id)
-        tweet = next(scraper.get_items(), None)
-        if tweet and getattr(tweet, "content", None):
-            display_name = getattr(tweet.user, "displayname", "Twitter/X")
-            screen_name = getattr(tweet.user, "username", "")
-            title = f"{display_name} @{screen_name}".strip()
-            return title, tweet.content, "snscrape"
-    except Exception:
-        pass
+    raise RuntimeError(f"tweet-text-not-found ({'; '.join(errors)})")
 
-    # 4. 最后兜底：Playwright（需浏览器内核，常常失败）
-    try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
-        
-        title = "Twitter/X 内容抓取 (Live)"
-        text = ""
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                )
-            )
-            if cookie_map:
-                context.add_cookies(build_playwright_cookies(cookie_map))
-            page = context.new_page()
-            try:
-                page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                title = page.title() or title
-                page.wait_for_selector('[data-testid="tweetText"]', timeout=20000)
-                text = page.locator('[data-testid="tweetText"]').first.inner_text().strip()
-                if text:
-                    return title, text, "playwright"
-            except:
-                pass
-            finally:
-                context.close()
-                browser.close()
-    except Exception:
-        pass
 
-    raise RuntimeError("tweet-text-not-found")
+def _get_request_deadline():
+    """返回本次请求的截止时间（秒级 timestamp）"""
+    is_vercel = os.getenv("VERCEL") == "1"
+    default_budget = 8 if is_vercel else 25
+    budget = int(os.getenv("REQUEST_TIMEOUT", str(default_budget)))
+    return time.time() + budget
+
+
+def _check_deadline(deadline, stage=""):
+    """如果已超时，立即抛出"""
+    remaining = deadline - time.time()
+    if remaining <= 0:
+        raise TimeoutError(f"请求超时（阶段: {stage}，已无剩余时间）")
+    return remaining
 
 
 @app.route('/api/parse', methods=['POST'])
 @app.route('/api/magic', methods=['POST'])
 def parse_content():
+    deadline = _get_request_deadline()
     data = request.get_json(silent=True) or {}
     url = data.get('url')
     platform = data.get('platform')
 
     if not url:
-        return jsonify({"error": "URL is required"}), 400
+        return jsonify({"error": "missing-url", "message": "请提供链接"}), 400
     if not platform:
-        return jsonify({"error": "Platform is required"}), 400
+        return jsonify({"error": "missing-platform", "message": "请指定平台"}), 400
 
     cache_key = f"{platform}:{url}"
     cached = cache_get(cache_key)
@@ -1020,140 +1170,163 @@ def parse_content():
 
     try:
         if platform == 'YouTube':
-            video_id = extract_youtube_id(url)
-            if not video_id:
-                return jsonify({"error": "Invalid YouTube URL"}), 400
-
-            transcript_error = None
-            subtitle_error = None
-            audio_error = None
-            metadata_error = None
-            full_text = ""
-            source = None
-            metadata = None
-
-            try:
-                transcript_data = fetch_youtube_transcript(video_id)
-                full_text = transcript_to_text(transcript_data)
-                if full_text:
-                    source = "transcript"
-            except Exception as exc:
-                transcript_error = exc
-
-            if not full_text and is_subtitle_dlp_enabled():
-                try:
-                    subtitle_data = fetch_youtube_subtitles_ytdlp(url)
-                    full_text = transcript_to_text(subtitle_data)
-                    if full_text:
-                        source = "subtitle"
-                except Exception as exc:
-                    subtitle_error = exc
-
-            if not full_text and is_audio_transcription_enabled():
-                try:
-                    full_text = transcribe_youtube_audio(url)
-                    if full_text:
-                        source = "audio"
-                except Exception as exc:
-                    audio_error = exc
-
-            if not full_text:
-                try:
-                    metadata = fetch_youtube_metadata(video_id, url)
-                    full_text = build_metadata_text(metadata)
-                    if full_text:
-                        source = "metadata"
-                except Exception as exc:
-                    metadata_error = exc
-
-            if not full_text:
-                category = classify_youtube_error(transcript_error, subtitle_error, audio_error, metadata_error)
-                message = f"未能获取视频内容（{category}）。"
-                if is_debug_enabled():
-                    details = []
-                    if transcript_error:
-                        details.append(f"transcript_error={transcript_error}")
-                    if subtitle_error:
-                        details.append(f"subtitle_error={subtitle_error}")
-                    if audio_error:
-                        details.append(f"audio_error={audio_error}")
-                    if metadata_error:
-                        details.append(f"metadata_error={metadata_error}")
-                    if details:
-                        message = f"{message} ({'; '.join(details)})"
-                raise RuntimeError(message)
-
-            summary_data, used_llm = build_summary_with_fallback(full_text, "YouTube")
-            title = metadata.get("title") if metadata else ""
-            title = title or "YouTube 视频内容实时解析 (Real Prototype)"
-            if source == "transcript":
-                confidence = "100% (Transcript + AI)" if used_llm else "85% (Transcript)"
-            elif source == "subtitle":
-                confidence = "95% (Subtitle + AI)" if used_llm else "80% (Subtitle)"
-            elif source == "audio":
-                confidence = "90% (Audio + AI)" if used_llm else "70% (Audio)"
-            else:
-                confidence = "70% (Metadata + AI)" if used_llm else "50% (Metadata)"
-            if source == "metadata":
-                length = f"{len(full_text)} 字符"
-            else:
-                length = f"{max(1, len(full_text) // 1000)}k 字符"
-
-            # For this prototype, we return the transcript length and summary
-            response_payload = {
-                "title": title,
-                "summary": summary_data.get("summary", ""),
-                "length": length,
-                "confidence": confidence,
-                "highlights": summary_data.get("highlights", [])
-            }
-            cache_set(cache_key, response_payload)
-            return jsonify(response_payload)
-
+            result = _handle_youtube(url, deadline)
         elif platform == 'Twitter':
-            twitter_cookies = data.get("twitter_cookies") or {}
-            if isinstance(twitter_cookies, str):
-                twitter_cookies = parse_cookie_header(twitter_cookies)
-            if not isinstance(twitter_cookies, dict):
-                twitter_cookies = {}
-            if data.get("auth_token"):
-                twitter_cookies.setdefault("auth_token", data.get("auth_token"))
-            if data.get("ct0"):
-                twitter_cookies.setdefault("ct0", data.get("ct0"))
+            result = _handle_twitter(url, data, deadline)
+        else:
+            return jsonify({"error": "unsupported-platform", "message": f"不支持的平台: {platform}"}), 400
 
-            title, text, method = fetch_twitter_text(url, twitter_cookies)
-            summary_data = build_twitter_summary(text)
-            method_labels = {
-                "fixtweet": "FixTweet API（推荐）",
-                "syndication": "Syndication API（不稳定）",
-                "snscrape": "snscrape 抓取",
-                "playwright": "Playwright DOM 抓取（兜底）",
-            }
-            confidences = {
-                "fixtweet": "95%",
-                "syndication": "75%",
-                "snscrape": "80%",
-                "playwright": "60%",
-            }
-            method_label = method_labels.get(method, "未知方式")
-            confidence = confidences.get(method, "70%")
-            response_payload = {
-                "title": title,
-                "summary": summary_data.get("summary", ""),
-                "length": f"{len(text)} 字符",
-                "confidence": confidence,
-                "highlights": summary_data.get("highlights", [])
-            }
-            cache_set(cache_key, response_payload)
-            return jsonify(response_payload)
+        cache_set(cache_key, result)
+        return jsonify(result)
 
-        return jsonify({"error": "Unsupported platform"}), 400
+    except TimeoutError as e:
+        return jsonify({
+            "error": "timeout",
+            "message": str(e),
+            "retryable": True,
+        }), 504
 
     except Exception as e:
         return jsonify({
             "error": "extraction-failed",
-            "message": str(e)
+            "message": str(e),
+            "retryable": "rate" in str(e).lower() or "timeout" in str(e).lower(),
         }), 500
+
+
+def _handle_youtube(url, deadline):
+    video_id = extract_youtube_id(url)
+    if not video_id:
+        raise ValueError("无效的 YouTube 链接")
+
+    transcript_error = None
+    subtitle_error = None
+    audio_error = None
+    metadata_error = None
+    full_text = ""
+    source = None
+    metadata = None
+
+    if is_youtube_poc_mode():
+        try:
+            _check_deadline(deadline, "poc")
+            full_text, source, poc_errors = fetch_youtube_content_poc(url, video_id)
+            subtitle_error = poc_errors.get("subtitle_error")
+            audio_error = poc_errors.get("audio_error")
+        except TimeoutError:
+            raise
+        except Exception as exc:
+            transcript_error = exc
+    else:
+        try:
+            _check_deadline(deadline, "transcript")
+            transcript_data = fetch_youtube_transcript(video_id)
+            full_text = transcript_to_text(transcript_data)
+            if full_text:
+                source = "transcript"
+        except TimeoutError:
+            raise
+        except Exception as exc:
+            transcript_error = exc
+
+        if not full_text and is_subtitle_dlp_enabled():
+            try:
+                _check_deadline(deadline, "subtitle-dlp")
+                subtitle_data = fetch_youtube_subtitles_ytdlp(url)
+                full_text = transcript_to_text(subtitle_data)
+                if full_text:
+                    source = "subtitle"
+            except TimeoutError:
+                raise
+            except Exception as exc:
+                subtitle_error = exc
+
+        if not full_text and is_audio_transcription_enabled():
+            try:
+                _check_deadline(deadline, "audio")
+                full_text = transcribe_youtube_audio(url)
+                if full_text:
+                    source = "audio"
+            except TimeoutError:
+                raise
+            except Exception as exc:
+                audio_error = exc
+
+    if not full_text:
+        try:
+            _check_deadline(deadline, "metadata")
+            metadata = fetch_youtube_metadata(video_id, url)
+            full_text = build_metadata_text(metadata)
+            if full_text:
+                source = "metadata"
+        except TimeoutError:
+            raise
+        except Exception as exc:
+            metadata_error = exc
+
+    if not full_text:
+        category = classify_youtube_error(transcript_error, subtitle_error, audio_error, metadata_error)
+        details = []
+        if transcript_error:
+            details.append(f"transcript={transcript_error}")
+        if subtitle_error:
+            details.append(f"subtitle={subtitle_error}")
+        if audio_error:
+            details.append(f"audio={audio_error}")
+        if metadata_error:
+            details.append(f"metadata={metadata_error}")
+        raise RuntimeError(f"未能获取视频内容（{category}）: {'; '.join(details)}")
+
+    _check_deadline(deadline, "summarize")
+    summary_data, used_llm = build_summary_with_fallback(full_text, "YouTube")
+    title = metadata.get("title") if metadata else ""
+    title = title or "YouTube 视频内容解析"
+
+    confidence_map = {
+        "transcript": ("100% (Transcript + AI)" if used_llm else "85% (Transcript)"),
+        "subtitle": ("95% (Subtitle + AI)" if used_llm else "80% (Subtitle)"),
+        "audio": ("90% (Audio + AI)" if used_llm else "70% (Audio)"),
+        "metadata": ("70% (Metadata + AI)" if used_llm else "50% (Metadata)"),
+    }
+    confidence = confidence_map.get(source, "50%")
+    length = f"{len(full_text)} 字符" if source == "metadata" else f"{max(1, len(full_text) // 1000)}k 字符"
+
+    return {
+        "title": title,
+        "summary": summary_data.get("summary", ""),
+        "length": length,
+        "confidence": confidence,
+        "highlights": summary_data.get("highlights", []),
+        "source": source,
+    }
+
+
+def _handle_twitter(url, data, deadline):
+    _check_deadline(deadline, "twitter")
+    twitter_cookies = data.get("twitter_cookies") or {}
+    if isinstance(twitter_cookies, str):
+        twitter_cookies = parse_cookie_header(twitter_cookies)
+    if not isinstance(twitter_cookies, dict):
+        twitter_cookies = {}
+    if data.get("auth_token"):
+        twitter_cookies.setdefault("auth_token", data.get("auth_token"))
+    if data.get("ct0"):
+        twitter_cookies.setdefault("ct0", data.get("ct0"))
+
+    title, text, method = fetch_twitter_text(url, twitter_cookies)
+    summary_data = build_twitter_summary(text)
+    confidences = {
+        "fixtweet": "95%",
+        "syndication": "75%",
+    }
+    return {
+        "title": title,
+        "summary": summary_data.get("summary", ""),
+        "length": f"{len(text)} 字符",
+        "confidence": confidences.get(method, "70%"),
+        "highlights": summary_data.get("highlights", []),
+        "source": method,
+    }
 
 if __name__ == '__main__':
     port = int(os.getenv("PORT", "5000"))

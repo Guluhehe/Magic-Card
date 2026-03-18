@@ -4,25 +4,29 @@ const statusDOM = document.getElementById("status");
 const platformChip = document.getElementById("platform-chip");
 const outputPanel = document.getElementById("output-panel");
 const galleryContainer = document.getElementById("card-gallery");
+const submitBtn = form.querySelector(".primary-btn");
 
 // Controls
 const colorSwatches = document.querySelectorAll(".color-swatch");
 const densitySelect = document.getElementById("density");
 const highlightsSelect = document.getElementById("show-highlights");
 const layoutSelect = document.getElementById("layout-mode");
-const downloadButtons = []; // Will be populated dynamically
 
 // State
 let appState = {
   data: null,
+  loading: false,
+  abortController: null,
   config: {
     accent: "#0fbfba",
     density: "normal",
-    highlights: "show", // show | hide
-    layout: "standard", // standard | quote | minimal
+    highlights: "show",
+    layout: "standard",
     themes: ["nebula", "circuit", "prism"]
   }
 };
+
+const REQUEST_TIMEOUT_MS = 30000; // 30s 前端超时
 
 const twitterLogoSvg = `
   <svg class="platform-logo" viewBox="0 0 24 24" role="img" aria-label="Twitter" style="width:16px;height:16px;display:inline-block;vertical-align:middle;">
@@ -43,12 +47,9 @@ const sampleUrls = {
 
 // --- Utils ---
 
-const setStatus = (message, color, visible = true) => {
+const setStatus = (message, type = "info") => {
   statusDOM.textContent = message || "";
-  if (color) {
-    statusDOM.style.color = color;
-  }
-  statusDOM.classList.toggle("hidden", !visible);
+  statusDOM.className = message ? `status status-${type}` : "status hidden";
 };
 
 const getApiBase = () => {
@@ -58,6 +59,22 @@ const getApiBase = () => {
   if (metaBase) return metaBase;
   const host = window.location.hostname;
   return (host === "localhost" || host === "127.0.0.1") ? "http://127.0.0.1:5000" : "";
+};
+
+const setLoading = (loading) => {
+  appState.loading = loading;
+  submitBtn.disabled = loading;
+  submitBtn.classList.toggle("is-loading", loading);
+  if (loading) {
+    submitBtn.innerHTML = `<span class="spinner"></span><span>解析中...</span>`;
+  } else {
+    submitBtn.innerHTML = `<span>生成卡片</span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round">
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+        <polyline points="12 5 19 12 12 19"></polyline>
+      </svg>`;
+  }
 };
 
 // --- Rendering Logic ---
@@ -72,25 +89,36 @@ const createHighlightHTML = (items) => {
   `).join("");
 };
 
+const renderSkeletonCard = (theme) => {
+  const card = document.createElement("article");
+  card.className = `content-card variant-${theme} is-skeleton`;
+  card.innerHTML = `
+    <div class="variant-label">${theme}</div>
+    <div class="card-header">
+      <span class="skeleton-line" style="width:60px"></span>
+      <span class="skeleton-line" style="width:40px"></span>
+    </div>
+    <div class="skeleton-line" style="width:80%;height:24px"></div>
+    <div class="skeleton-block"></div>
+    <div class="skeleton-highlights">
+      <div class="skeleton-line" style="width:100%;height:48px;border-radius:14px"></div>
+      <div class="skeleton-line" style="width:100%;height:48px;border-radius:14px"></div>
+    </div>
+  `;
+  return card;
+};
+
 const renderCard = (theme, data) => {
   const { config } = appState;
   const isTwitter = data.platform === "Twitter";
-  const lengthDisplay = data.length || ""; // Just text
-
-  // Choose Icon
+  const lengthDisplay = data.length || "";
   const platformIcon = isTwitter ? twitterLogoSvg : youtubeLogoSvg;
 
   const card = document.createElement("article");
   card.className = `content-card variant-${theme} layout-${config.layout}`;
   if (config.density === "compact") card.classList.add("compact");
-
-  // Set accent color
   card.style.setProperty("--accent", config.accent);
 
-  // Conditionally render parts based on Layout
-  let contentHTML = "";
-
-  // Common Elements
   const headerHTML = `
     <div class="card-header">
       <span class="platform" style="display:flex;align-items:center;gap:6px;">
@@ -119,13 +147,7 @@ const renderCard = (theme, data) => {
 
   const downloadBtnHTML = `<button class="download-btn" type="button">下载</button>`;
 
-  // Assemble based on Layout
-  // Currently, we use CSS to reorder, so DOM order can stay mostly consistent.
-  // However, for "Quote" layout, we might want to swap summary and title if we were doing it purely in DOM,
-  // but CSS Flexbox `order` is often enough. 
-  // Let's stick to a standard DOM and let CSS handle the display variations.
-
-  contentHTML = `
+  card.innerHTML = `
     <div class="variant-label">${theme}</div>
     ${headerHTML}
     ${titleHTML}
@@ -135,9 +157,6 @@ const renderCard = (theme, data) => {
     ${downloadBtnHTML}
   `;
 
-  card.innerHTML = contentHTML;
-
-  // Attach Event Listeners
   const btn = card.querySelector(".download-btn");
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -152,11 +171,15 @@ const renderCard = (theme, data) => {
   return card;
 };
 
-const renderGallery = () => {
+const renderGallery = (skeleton = false) => {
   galleryContainer.innerHTML = "";
 
-  // If no data, render placeholder state (optional, or just keep the empty state handled by initial HTML if we hadn't cleared it)
-  // But here we want to render specifically *with* the current configuration.
+  if (skeleton) {
+    appState.config.themes.forEach(theme => {
+      galleryContainer.appendChild(renderSkeletonCard(theme));
+    });
+    return;
+  }
 
   const dummyData = {
     platform: "Twitter",
@@ -171,24 +194,88 @@ const renderGallery = () => {
   };
 
   const dataToRender = appState.data || dummyData;
-
   appState.config.themes.forEach(theme => {
-    const cardNode = renderCard(theme, dataToRender);
-    galleryContainer.appendChild(cardNode);
+    galleryContainer.appendChild(renderCard(theme, dataToRender));
   });
+};
+
+// --- Error Display ---
+
+const showError = (message, retryable = false) => {
+  const errorContainer = document.getElementById("error-panel") || createErrorPanel();
+  errorContainer.classList.remove("hidden");
+  errorContainer.innerHTML = `
+    <div class="error-content">
+      <div class="error-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/>
+          <line x1="9" y1="9" x2="15" y2="15"/>
+        </svg>
+      </div>
+      <div class="error-text">
+        <strong>解析失败</strong>
+        <p>${message}</p>
+      </div>
+      ${retryable ? '<button class="retry-btn" type="button">重试</button>' : ''}
+    </div>
+  `;
+  if (retryable) {
+    errorContainer.querySelector(".retry-btn").addEventListener("click", () => {
+      errorContainer.classList.add("hidden");
+      form.dispatchEvent(new Event("submit", { cancelable: true }));
+    });
+  }
+};
+
+const createErrorPanel = () => {
+  const panel = document.createElement("div");
+  panel.id = "error-panel";
+  panel.className = "error-panel hidden";
+  // Insert after status
+  statusDOM.parentNode.insertBefore(panel, statusDOM.nextSibling);
+  return panel;
+};
+
+const hideError = () => {
+  const errorContainer = document.getElementById("error-panel");
+  if (errorContainer) errorContainer.classList.add("hidden");
 };
 
 // --- Actions ---
 
 const requestAiSummary = async ({ url, platform, id }) => {
-  const apiBase = getApiBase();
-  const res = await fetch(`${apiBase}/api/magic`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, platform, id }),
-  });
-  if (!res.ok) throw new Error((await res.json()).message || "api-error");
-  return res.json();
+  // Abort previous request if still pending
+  if (appState.abortController) {
+    appState.abortController.abort();
+  }
+  appState.abortController = new AbortController();
+  const { signal } = appState.abortController;
+
+  // Timeout
+  const timeoutId = setTimeout(() => appState.abortController.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const apiBase = getApiBase();
+    const res = await fetch(`${apiBase}/api/magic`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, platform, id }),
+      signal,
+    });
+
+    const body = await res.json();
+
+    if (!res.ok) {
+      const err = new Error(body.message || body.error || "api-error");
+      err.retryable = body.retryable || false;
+      err.errorCode = body.error;
+      throw err;
+    }
+
+    return body;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 };
 
 const parseUrl = (input) => {
@@ -198,7 +285,7 @@ const parseUrl = (input) => {
     const url = new URL(trimmed);
     const host = url.hostname.toLowerCase();
     if (host.includes("youtube.com") || host.includes("youtu.be")) {
-      return { platform: "YouTube", id: "video" }; // ID logic simplified for checking
+      return { platform: "YouTube", id: "video" };
     }
     if (host.includes("twitter.com") || host.includes("x.com")) {
       return { platform: "Twitter", id: "tweet" };
@@ -209,19 +296,24 @@ const parseUrl = (input) => {
 
 const handleSubmit = async (e) => {
   e.preventDefault();
+  if (appState.loading) return;
+
   const meta = parseUrl(urlInput.value);
   if (!meta) {
-    setStatus("不支持的链接", "#ef4444");
+    setStatus("不支持的链接，请输入 YouTube 或 Twitter 链接", "error");
     return;
   }
 
-  setStatus("正在解析...", "var(--primary)");
+  hideError();
+  setLoading(true);
+  setStatus("正在解析内容...", "loading");
+  platformChip.textContent = meta.platform;
 
-  // Show gallery immediately with loading state (or dummy data)
-  // For now we keep using dummy data or previous data? 
-  // Let's reset data to null to show "loading" effect if we had a skeleton.
-  // appState.data = null; 
-  // renderGallery();
+  // Show skeleton immediately
+  outputPanel.classList.remove("hidden");
+  outputPanel.classList.add("visible");
+  renderGallery(true);
+  outputPanel.scrollIntoView({ behavior: "smooth" });
 
   try {
     const result = await requestAiSummary({
@@ -230,39 +322,43 @@ const handleSubmit = async (e) => {
       id: meta.id
     });
 
-    appState.data = {
-      platform: meta.platform,
-      ...result
-    };
-
+    appState.data = { platform: meta.platform, ...result };
     renderGallery();
-    setStatus("生成成功", "#087c78");
-    outputPanel.classList.remove("hidden");
-    outputPanel.classList.add("visible");
-    outputPanel.scrollIntoView({ behavior: "smooth" });
+    setStatus("生成成功", "success");
 
   } catch (err) {
     console.error(err);
-    setStatus("生成失败", "#ef4444");
+    renderGallery(); // Show dummy data instead of broken skeletons
+
+    if (err.name === "AbortError") {
+      setStatus("请求超时，请重试", "error");
+      showError("请求超时（30s），可能是网络问题或服务器繁忙。", true);
+    } else {
+      setStatus("解析失败", "error");
+      showError(err.message || "未知错误", err.retryable !== false);
+    }
+  } finally {
+    setLoading(false);
   }
 };
 
 const downloadCard = async (card, btn) => {
   if (typeof htmlToImage === "undefined") return;
   btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = "导出中...";
   card.classList.add("is-capturing");
 
   try {
-    // Enforce specific width for capture to prevent layout shifts on mobile/narrow screens
     const scale = 3;
     const blob = await htmlToImage.toBlob(card, {
       pixelRatio: scale,
-      width: 520, // Enforce desktop-like width for the image
+      width: 520,
       style: {
         margin: '0',
-        transform: 'none', // Reset any hover transforms
-        boxShadow: 'none', // Optional: clean up shadow if desired in image
-        background: 'white' // Ensure background is opaque if transparent
+        transform: 'none',
+        boxShadow: 'none',
+        background: 'white'
       }
     });
 
@@ -276,6 +372,7 @@ const downloadCard = async (card, btn) => {
   } finally {
     card.classList.remove("is-capturing");
     btn.disabled = false;
+    btn.textContent = originalText;
   }
 };
 
@@ -283,7 +380,6 @@ const downloadCard = async (card, btn) => {
 
 form.addEventListener("submit", handleSubmit);
 
-// Color Swatches
 colorSwatches.forEach(swatch => {
   swatch.addEventListener("click", () => {
     colorSwatches.forEach(s => s.classList.remove("active"));
@@ -293,7 +389,6 @@ colorSwatches.forEach(swatch => {
   });
 });
 
-// Selects
 densitySelect.addEventListener("change", (e) => {
   appState.config.density = e.target.value;
   renderGallery();
@@ -309,14 +404,13 @@ layoutSelect.addEventListener("change", (e) => {
   renderGallery();
 });
 
-// Quick Actions
 document.querySelectorAll(".sample-link").forEach(btn => {
   btn.addEventListener("click", () => {
     urlInput.value = sampleUrls[btn.dataset.sample];
-    setStatus("示例已填入", "#087c78");
+    setStatus("示例已填入", "info");
   });
 });
 
 // Init
 renderGallery();
-setStatus("", "", false);
+setStatus("", "info");
