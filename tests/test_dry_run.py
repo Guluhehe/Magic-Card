@@ -9,7 +9,7 @@ import json
 import re
 import requests
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 def test_metadata_extraction():
     """Test YouTube metadata extraction"""
@@ -102,9 +102,9 @@ def test_api_magic_structure():
         content = f.read()
     
     required_methods = [
-        "_get_youtube_metadata",
-        "_parse_youtube_refined", 
-        "_call_gemini_with_fallback",
+        "_gemini_summarize",
+        "_parse_youtube",
+        "_send_json",
         "do_POST",
     ]
     
