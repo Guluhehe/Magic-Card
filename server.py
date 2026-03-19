@@ -1,11 +1,13 @@
 import base64
 import html
 import json
+import logging
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,6 +15,8 @@ from urllib.parse import quote, urlparse
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file if available
 try:
@@ -26,7 +30,15 @@ except ImportError:
 app = Flask(__name__)
 CORS(app)
 
+# --- Configuration Constants ---
+HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT_SECONDS", "10"))
+CONCURRENT_FETCH_TIMEOUT = int(os.getenv("CONCURRENT_FETCH_TIMEOUT", "8"))
+SUMMARY_INPUT_MAX_CHARS = int(os.getenv("SUMMARY_INPUT_CHARS", "12000"))
+TWITTER_TEXT_TRUNCATE = 400
+WHISPER_TIMEOUT = 120
+
 _CACHE = {}
+_CACHE_LOCK = threading.Lock()
 _CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
 _CACHE_MAX_ITEMS = int(os.getenv("CACHE_MAX_ITEMS", "256"))
 
@@ -34,23 +46,25 @@ _CACHE_MAX_ITEMS = int(os.getenv("CACHE_MAX_ITEMS", "256"))
 def cache_get(key):
     if _CACHE_TTL <= 0:
         return None
-    item = _CACHE.get(key)
-    if not item:
-        return None
-    value, ts = item
-    if time.time() - ts > _CACHE_TTL:
-        _CACHE.pop(key, None)
-        return None
-    return value
+    with _CACHE_LOCK:
+        item = _CACHE.get(key)
+        if not item:
+            return None
+        value, ts = item
+        if time.time() - ts > _CACHE_TTL:
+            _CACHE.pop(key, None)
+            return None
+        return value
 
 
 def cache_set(key, value):
     if _CACHE_TTL <= 0:
         return
-    if _CACHE_MAX_ITEMS > 0 and len(_CACHE) >= _CACHE_MAX_ITEMS:
-        oldest_key = min(_CACHE.items(), key=lambda item: item[1][1])[0]
-        _CACHE.pop(oldest_key, None)
-    _CACHE[key] = (value, time.time())
+    with _CACHE_LOCK:
+        if _CACHE_MAX_ITEMS > 0 and len(_CACHE) >= _CACHE_MAX_ITEMS:
+            oldest_key = min(_CACHE.items(), key=lambda item: item[1][1])[0]
+            _CACHE.pop(oldest_key, None)
+        _CACHE[key] = (value, time.time())
 
 def extract_youtube_id(url):
     pattern = r'(?:v=|\/)([0-9A-Za-z_-]{11}).*'
@@ -107,12 +121,6 @@ def build_playwright_cookies(cookie_map):
             )
     return cookies
 
-
-def summarize_text(text, limit=500):
-    cleaned = text.strip()
-    if len(cleaned) <= limit:
-        return cleaned
-    return cleaned[:limit] + "..."
 
 def is_debug_enabled():
     return os.getenv("TRANSCRIPT_DEBUG", "").lower() in ("1", "true", "yes")
@@ -478,7 +486,7 @@ def fetch_youtube_transcript(video_id):
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = {pool.submit(fn): name for name, fn in fast_methods.items()}
-        for future in as_completed(futures, timeout=8):
+        for future in as_completed(futures, timeout=CONCURRENT_FETCH_TIMEOUT):
             name = futures[future]
             try:
                 result = future.result(timeout=0)
@@ -498,21 +506,24 @@ def fetch_youtube_transcript(video_id):
     if is_vercel or skip_slow:
         raise RuntimeError(f"字幕获取失败（快速模式）: {'; '.join(errors)}")
 
-    # --- Phase 2: 慢速方法（仅本地环境）---
-    slow_methods = [
-        ("TimedText API", lambda: fetch_youtube_transcript_timedtext(video_id, languages)),
-        ("Piped API", lambda: fetch_youtube_transcript_piped(video_id, languages)),
-    ]
+    # --- Phase 2: 慢速方法并发（仅本地环境）---
+    slow_methods = {
+        "TimedText API": lambda: fetch_youtube_transcript_timedtext(video_id, languages),
+        "Piped API": lambda: fetch_youtube_transcript_piped(video_id, languages),
+    }
 
-    for name, fn in slow_methods:
-        try:
-            result = fn()
-            if result:
-                return result
-        except Exception as exc:
-            errors.append(f"{name}: {exc}")
-            if debug:
-                print(f"[DEBUG] {name} failed: {exc}")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = {pool.submit(fn): name for name, fn in slow_methods.items()}
+        for future in as_completed(futures, timeout=CONCURRENT_FETCH_TIMEOUT * 2):
+            name = futures[future]
+            try:
+                result = future.result(timeout=0)
+                if result:
+                    return result
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+                if debug:
+                    print(f"[DEBUG] {name} failed: {exc}")
 
     raise RuntimeError(f"未能获取字幕: {'; '.join(errors)}")
 
@@ -541,7 +552,7 @@ def summarize_with_openai(text, platform):
     base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
     client = OpenAI(api_key=api_key, base_url=base_url)
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    max_chars = int(os.getenv("SUMMARY_INPUT_CHARS", "12000"))
+    max_chars = SUMMARY_INPUT_MAX_CHARS
     snippet = text[:max_chars]
 
     system_prompt = (
@@ -701,7 +712,7 @@ def summarize_with_gemini(text, platform):
     genai.configure(api_key=api_key)
     model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
     model = genai.GenerativeModel(model_name)
-    max_chars = int(os.getenv("SUMMARY_INPUT_CHARS", "12000"))
+    max_chars = SUMMARY_INPUT_MAX_CHARS
     snippet = text[:max_chars]
 
     prompt = (
@@ -752,8 +763,8 @@ def build_summary_with_fallback(text, platform):
     if llm_summary:
         return llm_summary, True
     cleaned = text.strip()
-    if len(cleaned) > 400:
-        cleaned = cleaned[:400].rstrip() + "..."
+    if len(cleaned) > TWITTER_TEXT_TRUNCATE:
+        cleaned = cleaned[:TWITTER_TEXT_TRUNCATE].rstrip() + "..."
     return {"summary": cleaned, "highlights": []}, False
 
 
@@ -811,7 +822,7 @@ def transcribe_audio_with_groq(file_path):
             headers=headers,
             data={"model": model, "response_format": "json"},
             files={"file": (os.path.basename(file_path), audio_file)},
-            timeout=120,
+            timeout=WHISPER_TIMEOUT,
         )
     if not response.ok:
         raise RuntimeError(f"Groq Whisper 请求失败: {response.status_code} {response.text[:200]}")

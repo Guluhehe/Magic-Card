@@ -7,6 +7,7 @@ import json
 import sys
 import os
 import re
+import requests
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -98,8 +99,11 @@ class handler(BaseHTTPRequestHandler):
                 result = self._gemini_summarize(url, video_id, gemini_key)
                 if result:
                     return result
-            except Exception:
+            except (ImportError, ValueError, json.JSONDecodeError) as e:
                 pass  # Fall through to transcript
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Gemini summarize failed: %s", e)
 
         # 2. Try transcript extraction
         try:
@@ -107,7 +111,7 @@ class handler(BaseHTTPRequestHandler):
             full_text = to_text(transcript_data)
             if full_text:
                 source = "transcript"
-        except Exception:
+        except (requests.RequestException, TimeoutError, RuntimeError):
             pass
 
         # 3. Fallback to metadata
@@ -117,7 +121,7 @@ class handler(BaseHTTPRequestHandler):
                 full_text = build_meta_text(metadata)
                 if full_text:
                     source = "metadata"
-            except Exception:
+            except (requests.RequestException, TimeoutError, RuntimeError):
                 pass
 
         if not full_text:

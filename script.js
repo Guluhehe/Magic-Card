@@ -47,6 +47,13 @@ const sampleUrls = {
 
 // --- Utils ---
 
+const escapeHTML = (str) => {
+  if (!str) return "";
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+};
+
 const setStatus = (message, type = "info") => {
   statusDOM.textContent = message || "";
   statusDOM.className = message ? `status status-${type}` : "status hidden";
@@ -83,8 +90,8 @@ const createHighlightHTML = (items) => {
   if (!items || items.length === 0) return "";
   return items.map(item => `
     <div class="highlight">
-      <span>${item.label}</span>
-      <div>${item.text}</div>
+      <span>${escapeHTML(item.label)}</span>
+      <div>${escapeHTML(item.text)}</div>
     </div>
   `).join("");
 };
@@ -129,8 +136,8 @@ const renderCard = (theme, data) => {
     </div>
   `;
 
-  const titleHTML = `<h3>${data.title || "生成中..."}</h3>`;
-  const summaryHTML = `<p class="summary">${data.summary || "正在解析内容..."}</p>`;
+  const titleHTML = `<h3>${escapeHTML(data.title || "生成中...")}</h3>`;
+  const summaryHTML = `<p class="summary">${escapeHTML(data.summary || "正在解析内容...")}</p>`;
 
   const highlightsContent = createHighlightHTML(data.highlights);
   const showHighlights = config.highlights === "show" && highlightsContent;
@@ -214,7 +221,7 @@ const showError = (message, retryable = false) => {
       </div>
       <div class="error-text">
         <strong>解析失败</strong>
-        <p>${message}</p>
+        <p>${escapeHTML(message)}</p>
       </div>
       ${retryable ? '<button class="retry-btn" type="button">重试</button>' : ''}
     </div>
@@ -362,10 +369,13 @@ const downloadCard = async (card, btn) => {
       }
     });
 
+    const blobUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.download = `magic-card-${Date.now()}.png`;
-    link.href = URL.createObjectURL(blob);
+    link.href = blobUrl;
     link.click();
+    // Revoke blob URL to free memory
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
   } catch (e) {
     console.error(e);
     alert("下载失败");
